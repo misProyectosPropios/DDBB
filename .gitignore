@@ -1,0 +1,12 @@
+# Node / Web dependencies and build output
+node_modules/
+web/node_modules/
+web/dist/
+
+# Logs
+npm-debug.log*
+*.log
+
+# OS / Editor
+.DS_Store
+Thumbs.db

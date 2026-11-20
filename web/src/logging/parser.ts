@@ -7,8 +7,17 @@
 //   WRITE T1 X 12      (or W(T1, X, 12))
 //   COMMIT T1          (or C(T1))
 //   ABORT T1           (or A(T1))
+//   CHECKPOINT         (or CKPT)
 
-import { AbortOp, CommitOp, ReadOp, StartOp, WriteOp, type Operation } from "./dispatch";
+import {
+  AbortOp,
+  CheckpointOp,
+  CommitOp,
+  ReadOp,
+  StartOp,
+  WriteOp,
+  type Operation
+} from "./dispatch";
 
 export interface ParseResult {
   operations: Operation[];
@@ -26,7 +35,6 @@ export function parseScheduleText(input: string): ParseResult {
 
   rawLines.forEach((line, idx) => {
     const lineNum = idx + 1;
-    // Normalize parentheses & commas into spaces so both `WRITE T1 X 12` and `W(T1, X, 12)` work.
     const tokens = line
       .replace(/[(),]/g, " ")
       .split(/\s+/)
@@ -92,9 +100,18 @@ export function parseScheduleText(input: string): ParseResult {
         operations.push(new AbortOp(tokens[1]));
         break;
       }
+      case "CHECKPOINT":
+      case "CKPT": {
+        if (tokens.length !== 1) {
+          parseErrors.push(`Line ${lineNum}: expected "CHECKPOINT" with no arguments (got "${line}").`);
+          return;
+        }
+        operations.push(new CheckpointOp());
+        break;
+      }
       default:
         parseErrors.push(
-          `Line ${lineNum}: unknown operation "${tokens[0]}". Use START, READ, WRITE, COMMIT, or ABORT.`
+          `Line ${lineNum}: unknown operation "${tokens[0]}". Use START, READ, WRITE, COMMIT, ABORT, or CHECKPOINT.`
         );
     }
   });

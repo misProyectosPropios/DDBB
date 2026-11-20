@@ -1,23 +1,13 @@
-// Mirrors dafny/logging/UndoLogger.dfy — Simple (Pure) Undo Logging strategy
-// enforcing Rules U1 (Flush before Output) and U2 (Output before Commit).
+// Mirrors dafny/logging/UndoLogger.dfy — Undo Logging strategy composing a
+// CheckpointStrategy (None, Quiescent, or Non-Quiescent).
 
-import type { LoggingStrategy, Operation } from "./dispatch";
+import {
+  NoCheckpointStrategy,
+  type CheckpointState,
+  type CheckpointStrategy
+} from "./checkpointing";
+import type { LoggingStepSnapshot, LoggingStrategy, Operation } from "./dispatch";
 import type { DatabaseState, ElementId, LogRecord, TraceEvent, TxId, Value } from "./types";
-
-export interface UndoStepSnapshot {
-  stepIndex: number;
-  operationLabel: string;
-  log: LogRecord[];
-  trace: TraceEvent[];
-  newTraceStart: number;
-  errors: string[];
-  flushedLogLen: number;
-  disk: DatabaseState;
-  buffer: DatabaseState;
-  activeTxs: TxId[];
-  committedTxs: TxId[];
-  abortedTxs: TxId[];
-}
 
 export class UndoLogger implements LoggingStrategy {
   private _log: LogRecord[] = [];
@@ -27,12 +17,17 @@ export class UndoLogger implements LoggingStrategy {
   private _buffer: DatabaseState;
   private _flushedLogLen = 0;
   private _activeTxs = new Set<TxId>();
+  private _activeOrder: TxId[] = [];
   private _committedTxs = new Set<TxId>();
   private _abortedTxs = new Set<TxId>();
   private _dirtyElements = new Map<TxId, ElementId[]>();
-  private _snapshots: UndoStepSnapshot[] = [];
+  private _ckptState: CheckpointState = { kind: "CkptIdle" };
+  private _snapshots: LoggingStepSnapshot[] = [];
 
-  constructor(initialDb: DatabaseState) {
+  constructor(
+    initialDb: DatabaseState,
+    readonly checkpointStrategy: CheckpointStrategy = new NoCheckpointStrategy()
+  ) {
     this._disk = { ...initialDb };
     this._buffer = { ...initialDb };
     this._snapshots.push(this.captureSnapshot(0, "Initial State", 0));
@@ -54,7 +49,7 @@ export class UndoLogger implements LoggingStrategy {
     return this._flushedLogLen;
   }
 
-  get snapshots(): readonly UndoStepSnapshot[] {
+  get snapshots(): readonly LoggingStepSnapshot[] {
     return this._snapshots;
   }
 
@@ -67,6 +62,10 @@ export class UndoLogger implements LoggingStrategy {
   }
 
   visitStart(tx: TxId): void {
+    if (!this.checkpointStrategy.canStartTransaction(this._ckptState)) {
+      this._errors.push(this.checkpointStrategy.blockedStartMessage(tx));
+      return;
+    }
     if (this._activeTxs.has(tx) || this._committedTxs.has(tx) || this._abortedTxs.has(tx)) {
       this._errors.push(`Cannot START ${tx}: transaction was already started.`);
       return;
@@ -76,6 +75,7 @@ export class UndoLogger implements LoggingStrategy {
     this._log.push(rec);
     this._trace.push({ kind: "EventLog", record: rec });
     this._activeTxs.add(tx);
+    this._activeOrder.push(tx);
     this._dirtyElements.set(tx, []);
   }
 
@@ -118,6 +118,30 @@ export class UndoLogger implements LoggingStrategy {
     }
   }
 
+  visitCheckpoint(): void {
+    const res = this.checkpointStrategy.onCheckpointRequested(
+      this._ckptState,
+      this._activeOrder,
+      true
+    );
+    if (res.error) {
+      this._errors.push(res.error);
+      return;
+    }
+    this.applyCheckpointTransition(res.nextState, res.records);
+  }
+
+  private applyCheckpointTransition(nextState: CheckpointState, records: LogRecord[]): void {
+    for (const rec of records) {
+      this._log.push(rec);
+      this._trace.push({ kind: "EventLog", record: rec });
+    }
+    if (records.length > 0) {
+      this.flushLogIfNeeded();
+    }
+    this._ckptState = nextState;
+  }
+
   private flushLogIfNeeded(): void {
     if (this._flushedLogLen < this._log.length) {
       this._flushedLogLen = this._log.length;
@@ -134,19 +158,6 @@ export class UndoLogger implements LoggingStrategy {
     }
   }
 
-  private emitCommitAndFinalize(tx: TxId): void {
-    const rec: LogRecord = { kind: "LogCommit", tx };
-    this._log.push(rec);
-    this._trace.push({ kind: "EventLog", record: rec });
-
-    this._flushedLogLen = this._log.length;
-    this._trace.push({ kind: "EventFlushLog", flushedCount: this._flushedLogLen });
-
-    this._activeTxs.delete(tx);
-    this._committedTxs.add(tx);
-    this._dirtyElements.delete(tx);
-  }
-
   visitCommit(tx: TxId): void {
     if (!this._activeTxs.has(tx)) {
       this._errors.push(`Cannot COMMIT ${tx}: transaction is not active.`);
@@ -155,10 +166,33 @@ export class UndoLogger implements LoggingStrategy {
 
     this.flushLogIfNeeded();
     this.outputDirtyElements(tx);
-    this.emitCommitAndFinalize(tx);
+
+    const rec: LogRecord = { kind: "LogCommit", tx };
+    this._log.push(rec);
+    this._trace.push({ kind: "EventLog", record: rec });
+
+    this._flushedLogLen = this._log.length;
+    this._trace.push({ kind: "EventFlushLog", flushedCount: this._flushedLogLen });
+
+    this._activeTxs.delete(tx);
+    this._activeOrder = this._activeOrder.filter((t) => t !== tx);
+    this._committedTxs.add(tx);
+    this._dirtyElements.delete(tx);
+
+    const res = this.checkpointStrategy.onTransactionFinished(
+      this._ckptState,
+      tx,
+      this._activeOrder
+    );
+    this.applyCheckpointTransition(res.nextState, res.records);
   }
 
-  private rollbackTxBuffer(tx: TxId): void {
+  visitAbort(tx: TxId): void {
+    if (!this._activeTxs.has(tx)) {
+      this._errors.push(`Cannot ABORT ${tx}: transaction is not active.`);
+      return;
+    }
+
     for (let idx = this._log.length - 1; idx >= 0; idx--) {
       const rec = this._log[idx];
       if (rec.kind === "LogUndoUpdate" && rec.tx === tx) {
@@ -171,9 +205,7 @@ export class UndoLogger implements LoggingStrategy {
         });
       }
     }
-  }
 
-  private emitAbortAndFinalize(tx: TxId): void {
     const rec: LogRecord = { kind: "LogAbort", tx };
     this._log.push(rec);
     this._trace.push({ kind: "EventLog", record: rec });
@@ -182,18 +214,16 @@ export class UndoLogger implements LoggingStrategy {
     this._trace.push({ kind: "EventFlushLog", flushedCount: this._flushedLogLen });
 
     this._activeTxs.delete(tx);
+    this._activeOrder = this._activeOrder.filter((t) => t !== tx);
     this._abortedTxs.add(tx);
     this._dirtyElements.delete(tx);
-  }
 
-  visitAbort(tx: TxId): void {
-    if (!this._activeTxs.has(tx)) {
-      this._errors.push(`Cannot ABORT ${tx}: transaction is not active.`);
-      return;
-    }
-
-    this.rollbackTxBuffer(tx);
-    this.emitAbortAndFinalize(tx);
+    const res = this.checkpointStrategy.onTransactionFinished(
+      this._ckptState,
+      tx,
+      this._activeOrder
+    );
+    this.applyCheckpointTransition(res.nextState, res.records);
   }
 
   getLog(): readonly LogRecord[] {
@@ -220,11 +250,17 @@ export class UndoLogger implements LoggingStrategy {
     return { ...this._buffer };
   }
 
+  getCheckpointState(): CheckpointState {
+    return this._ckptState.kind === "CkptActiveNonQuiescent"
+      ? { kind: "CkptActiveNonQuiescent", watchedTxs: [...this._ckptState.watchedTxs] }
+      : { ...this._ckptState };
+  }
+
   private captureSnapshot(
     stepIndex: number,
     operationLabel: string,
     newTraceStart: number
-  ): UndoStepSnapshot {
+  ): LoggingStepSnapshot {
     return {
       stepIndex,
       operationLabel,
@@ -235,9 +271,10 @@ export class UndoLogger implements LoggingStrategy {
       flushedLogLen: this._flushedLogLen,
       disk: { ...this._disk },
       buffer: { ...this._buffer },
-      activeTxs: Array.from(this._activeTxs),
+      activeTxs: [...this._activeOrder],
       committedTxs: Array.from(this._committedTxs),
-      abortedTxs: Array.from(this._abortedTxs)
+      abortedTxs: Array.from(this._abortedTxs),
+      ckptState: this.getCheckpointState()
     };
   }
 }

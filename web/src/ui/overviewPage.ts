@@ -20,38 +20,46 @@ export function renderOverviewPage(onNavigate: (route: RouteId) => void): HTMLEl
     <section class="prose-section">
       <h2>Available Interactive Pages</h2>
       <p>
-        We are building one topic at a time, starting with transaction recovery and logging.
-        Use the sidebar on the left to browse the curriculum.
+        Both Undo and Redo logging are available now, each composable with
+        <strong>Quiescent</strong> and <strong>Non-Quiescent</strong> checkpointing and
+        checkpoint-aware crash recovery.
       </p>
 
       <div class="topic-card-grid">
         <div class="topic-card topic-card-ready">
           <div class="topic-card-eyebrow">Logging · Available Now</div>
-          <h3>Undo Logging (Simple / Pure)</h3>
+          <h3>Undo Logging</h3>
           <p>
-            Define initial database variables (such as <code>X = 5</code>, <code>Y = 10</code>),
-            build a schedule of transactions, inspect the generated Undo log records, trace
-            <code>FLUSH LOG</code> and <code>OUTPUT</code> ordering (Rules U1 &amp; U2), and simulate crash recovery.
+            Records old values (<code>&lt;T, X, oldVal&gt;</code>), enforces Rules U1 &amp; U2,
+            supports Quiescent &amp; Non-Quiescent checkpointing, and runs backward Undo crash recovery.
           </p>
           <button type="button" class="btn btn-primary" data-open-undo>
             Open Undo Logging →
           </button>
         </div>
 
-        <div class="topic-card topic-card-muted">
-          <div class="topic-card-eyebrow">Up Next</div>
-          <h3>Redo, Undo/Redo &amp; Non-Quiescent Checkpointing</h3>
+        <div class="topic-card topic-card-ready">
+          <div class="topic-card-eyebrow">Logging · Available Now</div>
+          <h3>Redo Logging</h3>
           <p>
-            Additional logging strategies will plug into the same double-dispatch
-            <code>LoggingStrategy</code> architecture without changing schedule definitions.
+            Records new values (<code>&lt;T, X, newVal&gt;</code>), enforces Rule R1 (WAL + commit
+            flush before <code>OUTPUT</code>), supports Quiescent &amp; Non-Quiescent checkpointing,
+            and runs forward Redo crash recovery.
           </p>
+          <button type="button" class="btn btn-primary" data-open-redo>
+            Open Redo Logging →
+          </button>
         </div>
       </div>
     </section>
   `;
 
-  const openUndoBtn = article.querySelector<HTMLButtonElement>("[data-open-undo]");
-  openUndoBtn?.addEventListener("click", () => onNavigate("undo"));
+  article.querySelector<HTMLButtonElement>("[data-open-undo]")?.addEventListener("click", () => {
+    onNavigate("undo");
+  });
+  article.querySelector<HTMLButtonElement>("[data-open-redo]")?.addEventListener("click", () => {
+    onNavigate("redo");
+  });
 
   return article;
 }

@@ -1,8 +1,8 @@
 // Left sidebar navigation for the static blog layout.
-// Lists all planned DDBB curriculum sections as titles; only the Undo Logging
-// page (and the optional Overview landing) is linked for now.
+// Lists all planned DDBB curriculum sections as titles; Undo Logging and Redo
+// Logging (with Quiescent & Non-Quiescent checkpointing) are active pages.
 
-export type RouteId = "undo" | "overview";
+export type RouteId = "undo" | "redo" | "overview";
 
 interface NavItem {
   label: string;
@@ -20,9 +20,8 @@ export const NAV_SECTIONS: NavSection[] = [
     title: "Logging",
     items: [
       { label: "Undo Logging", route: "undo", status: "active" },
-      { label: "Redo Logging", status: "soon" },
-      { label: "Undo / Redo Logging", status: "soon" },
-      { label: "Checkpointing (Non-Quiescent)", status: "soon" }
+      { label: "Redo Logging", route: "redo", status: "active" },
+      { label: "Undo / Redo Logging", status: "soon" }
     ]
   },
   {
@@ -82,7 +81,6 @@ export function renderSidebar(
   const nav = document.createElement("nav");
   nav.className = "sidebar-nav";
 
-  // Top overview link
   const overviewLink = document.createElement("button");
   overviewLink.type = "button";
   overviewLink.className = `nav-link nav-link-top${currentRoute === "overview" ? " is-current" : ""}`;

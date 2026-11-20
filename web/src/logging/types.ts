@@ -1,5 +1,5 @@
-// Mirrors dafny/logging/Types.dfy — core domain types, Undo log records,
-// execution trace events, and string formatters.
+// Mirrors dafny/logging/Types.dfy — core domain types, Undo & Redo log records,
+// checkpoint records, execution trace events, and string formatters.
 
 export type TxId = string;
 export type ElementId = string;
@@ -9,8 +9,12 @@ export type DatabaseState = Record<ElementId, Value>;
 export type LogRecord =
   | { kind: "LogStart"; tx: TxId }
   | { kind: "LogUndoUpdate"; tx: TxId; element: ElementId; oldValue: Value }
+  | { kind: "LogRedoUpdate"; tx: TxId; element: ElementId; newValue: Value }
   | { kind: "LogCommit"; tx: TxId }
-  | { kind: "LogAbort"; tx: TxId };
+  | { kind: "LogAbort"; tx: TxId }
+  | { kind: "LogCheckpoint" }
+  | { kind: "LogStartCheckpoint"; activeTxs: TxId[] }
+  | { kind: "LogEndCheckpoint" };
 
 export type TraceEvent =
   | { kind: "EventLog"; record: LogRecord }
@@ -20,16 +24,44 @@ export type TraceEvent =
   | { kind: "EventFlushLog"; flushedCount: number }
   | { kind: "EventOutput"; element: ElementId; value: Value };
 
+export function finishedTxs(flushedLog: readonly LogRecord[]): Set<TxId> {
+  const finished = new Set<TxId>();
+  for (const rec of flushedLog) {
+    if (rec.kind === "LogCommit" || rec.kind === "LogAbort") {
+      finished.add(rec.tx);
+    }
+  }
+  return finished;
+}
+
+export function committedTxs(flushedLog: readonly LogRecord[]): Set<TxId> {
+  const committed = new Set<TxId>();
+  for (const rec of flushedLog) {
+    if (rec.kind === "LogCommit") {
+      committed.add(rec.tx);
+    }
+  }
+  return committed;
+}
+
 export function formatLogRecord(r: LogRecord): string {
   switch (r.kind) {
     case "LogStart":
       return `<START ${r.tx}>`;
     case "LogUndoUpdate":
       return `<${r.tx}, ${r.element}, ${r.oldValue}>`;
+    case "LogRedoUpdate":
+      return `<${r.tx}, ${r.element}, ${r.newValue}>`;
     case "LogCommit":
       return `<COMMIT ${r.tx}>`;
     case "LogAbort":
       return `<ABORT ${r.tx}>`;
+    case "LogCheckpoint":
+      return `<CKPT>`;
+    case "LogStartCheckpoint":
+      return `<START CKPT(${r.activeTxs.join(", ")})>`;
+    case "LogEndCheckpoint":
+      return `<END CKPT>`;
   }
 }
 

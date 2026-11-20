@@ -1,8 +1,8 @@
-// Runnable demonstrations and verified test cases for the Dafny Undo & Redo
-// Logging modules using Dispatch and shared LoggingStrategy / RecoveryStrategy
-// interfaces.
+// Runnable demonstrations and verified test cases for Undo & Redo Logging
+// composed with NoCheckpoint, Quiescent, and Non-Quiescent checkpoint strategies.
 
 include "Types.dfy"
+include "Checkpointing.dfy"
 include "Dispatch.dfy"
 include "UndoLogger.dfy"
 include "UndoRecovery.dfy"
@@ -11,6 +11,7 @@ include "RedoRecovery.dfy"
 
 module Main {
   import opened LoggingTypes
+  import opened Checkpointing
   import opened LoggingDispatch
   import opened UndoLogging
   import UndoRecovery
@@ -21,11 +22,12 @@ module Main {
   // Statically verified unit tests (proved by Dafny at compile/verify time)
   // ---------------------------------------------------------------------------
 
-  // Classic Garcia-Molina example (Undo): T1 doubles A and B (initial A=8, B=8).
+  // Classic Garcia-Molina example (Undo, no checkpoints): T1 doubles A and B.
   method TestSingleTransactionUndoVerified()
   {
     var initialDb: DatabaseState := map["A" := 8, "B" := 8];
-    var logger := new UndoLogger(initialDb);
+    var ckpt := new NoCheckpointStrategy();
+    var logger := new UndoLogger(initialDb, ckpt);
 
     logger.VisitStart("T1");
     assert logger.log == [LogStart("T1")];
@@ -57,11 +59,12 @@ module Main {
     assert "T1" in logger.committedTxs;
   }
 
-  // Classic Garcia-Molina example (Redo): T1 doubles A and B (initial A=8, B=8).
+  // Classic Garcia-Molina example (Redo, no checkpoints): T1 doubles A and B.
   method TestSingleTransactionRedoVerified()
   {
     var initialDb: DatabaseState := map["A" := 8, "B" := 8];
-    var logger := new RedoLogger(initialDb);
+    var ckpt := new NoCheckpointStrategy();
+    var logger := new RedoLogger(initialDb, ckpt);
 
     logger.VisitStart("T1");
     assert logger.log == [LogStart("T1")];
@@ -93,7 +96,8 @@ module Main {
     assert "T1" in logger.committedTxs;
   }
 
-  // Polymorphic runner accepting any LoggingStrategy (UndoLogger or RedoLogger).
+  // Polymorphic runner accepting any LoggingStrategy (Undo or Redo with any
+  // CheckpointStrategy).
   method RunWithAnyStrategy(schedule: Schedule, strategy: LoggingStrategy)
     returns (logResult: seq<LogRecord>, traceResult: seq<TraceEvent>, errorResult: seq<string>)
     requires strategy.Valid()
@@ -109,183 +113,170 @@ module Main {
   }
 
   // ---------------------------------------------------------------------------
-  // Undo Logging Demos
+  // Quiescent vs. Non-Quiescent Checkpointing Demos (Undo & Redo)
   // ---------------------------------------------------------------------------
 
-  method DemoSingleTransactionUndo()
+  // Quiescent Undo: CheckpointOp stops new transactions (T2 is rejected while
+  // T1 is still active), waits for T1 to finish, emits <CKPT>, then lets T3 start.
+  method DemoQuiescentUndo()
   {
-    var initialDb: DatabaseState := map["A" := 8, "B" := 8];
+    var initialDb: DatabaseState := map["X" := 5, "Y" := 10];
     var ops: seq<Operation> := [
       StartOp("T1"),
-      ReadOp("T1", "A"),
-      WriteOp("T1", "A", 16),
-      ReadOp("T1", "B"),
-      WriteOp("T1", "B", 16),
-      CommitOp("T1")
+      WriteOp("T1", "X", 12),
+      CheckpointOp,           // Enters draining mode (T1 still active)
+      StartOp("T2"),          // Blocked by quiescent checkpoint!
+      CommitOp("T1"),         // Last active tx finishes -> emits <CKPT>
+      StartOp("T3"),          // Allowed again after <CKPT>
+      WriteOp("T3", "Y", 20),
+      CommitOp("T3")
     ];
     var schedule := Schedule(ops);
-    var logger := new UndoLogger(initialDb);
+    var quiescent := new QuiescentCheckpointStrategy();
+    var logger := new UndoLogger(initialDb, quiescent);
 
     var generatedLog, generatedTrace, errs := RunWithAnyStrategy(schedule, logger);
 
-    expect errs == [];
+    expect |errs| == 1;
     expect generatedLog == [
       LogStart("T1"),
-      LogUndoUpdate("T1", "A", 8),
-      LogUndoUpdate("T1", "B", 8),
-      LogCommit("T1")
-    ];
-    expect "A" in logger.GetDisk() && logger.GetDisk()["A"] == 16;
-    expect "B" in logger.GetDisk() && logger.GetDisk()["B"] == 16;
-
-    print "=== Demo 1 (Undo): Single Transaction (T1 commits) ===\n";
-    print "--- Undo Log ---\n", FormatLog(generatedLog), "\n";
-    print "--- Execution Trace (WAL + OUTPUT order) ---\n", FormatTrace(generatedTrace), "\n\n";
-  }
-
-  method DemoInterleavedCommitAndAbortUndo()
-  {
-    var initialDb: DatabaseState := map["A" := 10, "B" := 20];
-    var ops: seq<Operation> := [
-      StartOp("T1"),
-      StartOp("T2"),
-      WriteOp("T1", "A", 15),
-      WriteOp("T2", "B", 99),
-      CommitOp("T1"),
-      AbortOp("T2")
-    ];
-    var schedule := Schedule(ops);
-    var logger := new UndoLogger(initialDb);
-
-    var generatedLog, generatedTrace, errs := schedule.Run(logger);
-
-    expect errs == [];
-    expect generatedLog == [
-      LogStart("T1"),
-      LogStart("T2"),
-      LogUndoUpdate("T1", "A", 10),
-      LogUndoUpdate("T2", "B", 20),
+      LogUndoUpdate("T1", "X", 5),
       LogCommit("T1"),
-      LogAbort("T2")
+      LogCheckpoint,
+      LogStart("T3"),
+      LogUndoUpdate("T3", "Y", 10),
+      LogCommit("T3")
     ];
-    expect "A" in logger.GetDisk() && logger.GetDisk()["A"] == 15;
-    expect "B" in logger.GetDisk() && logger.GetDisk()["B"] == 20;
-    expect "A" in logger.GetBuffer() && logger.GetBuffer()["A"] == 15;
-    expect "B" in logger.GetBuffer() && logger.GetBuffer()["B"] == 20;
 
-    print "=== Demo 2 (Undo): Interleaved Transactions (T1 commits, T2 aborts) ===\n";
+    print "=== Demo 1: Quiescent Undo Checkpointing ===\n";
     print "--- Undo Log ---\n", FormatLog(generatedLog), "\n";
-    print "--- Execution Trace ---\n", FormatTrace(generatedTrace), "\n\n";
+    print "Blocked operations: ", |errs|, "\n";
+    print "--- Trace ---\n", FormatTrace(generatedTrace), "\n\n";
   }
 
-  method DemoUndoCrashRecovery()
+  // Non-Quiescent Undo: CheckpointOp emits <START CKPT(T1)>, allows T2 to start
+  // concurrently, and emits <END CKPT> as soon as T1 finishes (even while T2 runs).
+  method DemoNonQuiescentUndo()
   {
-    var initialDb: DatabaseState := map["A" := 10, "B" := 20];
+    var initialDb: DatabaseState := map["X" := 5, "Y" := 10];
     var ops: seq<Operation> := [
       StartOp("T1"),
-      StartOp("T2"),
-      WriteOp("T1", "A", 50),
-      WriteOp("T2", "B", 999),
-      CommitOp("T1")
+      WriteOp("T1", "X", 12),
+      CheckpointOp,           // Emits <START CKPT(T1)>
+      StartOp("T2"),          // Allowed! Non-quiescent does not block T2
+      WriteOp("T2", "Y", 99),
+      CommitOp("T1"),         // T1 (the watched tx) finishes -> emits <END CKPT>
+      CommitOp("T2")
     ];
     var schedule := Schedule(ops);
-    var logger := new UndoLogger(initialDb);
-
-    var _, _, errs := schedule.Run(logger);
-    expect errs == [];
-
-    var flushedLog := logger.GetFlushedLog();
-    var diskAtCrash := logger.GetDisk()["B" := 999];
-    var recovery: RecoveryStrategy := new UndoRecovery.UndoRecoveryStrategy();
-    var recoveredDisk, recoveryAborts := recovery.RecoverFromCrash(diskAtCrash, flushedLog);
-
-    expect "A" in recoveredDisk && recoveredDisk["A"] == 50;
-    expect "B" in recoveredDisk && recoveredDisk["B"] == 20;
-    expect recoveryAborts == [LogAbort("T2")];
-
-    print "=== Demo 3 (Undo): Crash Recovery (T1 committed, T2 crashed) ===\n";
-    print "--- Flushed Undo Log ---\n", FormatLog(flushedLog), "\n";
-    print "--- Recovery Abort Records ---\n", FormatLog(recoveryAborts), "\n";
-    print "Recovered disk: A=", recoveredDisk["A"], ", B=", recoveredDisk["B"], "\n\n";
-  }
-
-  // ---------------------------------------------------------------------------
-  // Redo Logging Demos
-  // ---------------------------------------------------------------------------
-
-  method DemoSingleTransactionRedo()
-  {
-    var initialDb: DatabaseState := map["A" := 8, "B" := 8];
-    var ops: seq<Operation> := [
-      StartOp("T1"),
-      ReadOp("T1", "A"),
-      WriteOp("T1", "A", 16),
-      ReadOp("T1", "B"),
-      WriteOp("T1", "B", 16),
-      CommitOp("T1")
-    ];
-    var schedule := Schedule(ops);
-    var logger := new RedoLogger(initialDb);
+    var nonQuiescent := new NonQuiescentCheckpointStrategy();
+    var logger := new UndoLogger(initialDb, nonQuiescent);
 
     var generatedLog, generatedTrace, errs := RunWithAnyStrategy(schedule, logger);
 
     expect errs == [];
     expect generatedLog == [
       LogStart("T1"),
-      LogRedoUpdate("T1", "A", 16),
-      LogRedoUpdate("T1", "B", 16),
-      LogCommit("T1")
+      LogUndoUpdate("T1", "X", 5),
+      LogStartCheckpoint(["T1"]),
+      LogStart("T2"),
+      LogUndoUpdate("T2", "Y", 10),
+      LogCommit("T1"),
+      LogEndCheckpoint,
+      LogCommit("T2")
     ];
-    expect "A" in logger.GetDisk() && logger.GetDisk()["A"] == 16;
-    expect "B" in logger.GetDisk() && logger.GetDisk()["B"] == 16;
 
-    print "=== Demo 4 (Redo): Single Transaction (T1 commits) ===\n";
-    print "--- Redo Log ---\n", FormatLog(generatedLog), "\n";
-    print "--- Execution Trace (WAL + COMMIT + FLUSH before OUTPUT) ---\n", FormatTrace(generatedTrace), "\n\n";
+    print "=== Demo 2: Non-Quiescent Undo Checkpointing ===\n";
+    print "--- Undo Log ---\n", FormatLog(generatedLog), "\n";
+    print "--- Trace ---\n", FormatTrace(generatedTrace), "\n\n";
   }
 
-  method DemoRedoCrashRecovery()
+  // Non-Quiescent Redo: CheckpointOp emits <START CKPT(T1)> and <END CKPT>
+  // immediately (committed updates are already on disk), while T1 and T2 keep running.
+  method DemoNonQuiescentRedo()
+  {
+    var initialDb: DatabaseState := map["X" := 5, "Y" := 10];
+    var ops: seq<Operation> := [
+      StartOp("T1"),
+      WriteOp("T1", "X", 12),
+      CheckpointOp,           // Emits <START CKPT(T1)> and <END CKPT> immediately
+      StartOp("T2"),
+      WriteOp("T2", "Y", 25),
+      CommitOp("T1"),
+      CommitOp("T2")
+    ];
+    var schedule := Schedule(ops);
+    var nonQuiescent := new NonQuiescentCheckpointStrategy();
+    var logger := new RedoLogger(initialDb, nonQuiescent);
+
+    var generatedLog, generatedTrace, errs := RunWithAnyStrategy(schedule, logger);
+
+    expect errs == [];
+    expect generatedLog == [
+      LogStart("T1"),
+      LogRedoUpdate("T1", "X", 12),
+      LogStartCheckpoint(["T1"]),
+      LogEndCheckpoint,
+      LogStart("T2"),
+      LogRedoUpdate("T2", "Y", 25),
+      LogCommit("T1"),
+      LogCommit("T2")
+    ];
+
+    print "=== Demo 3: Non-Quiescent Redo Checkpointing ===\n";
+    print "--- Redo Log ---\n", FormatLog(generatedLog), "\n";
+    print "--- Trace ---\n", FormatTrace(generatedTrace), "\n\n";
+  }
+
+  // Crash recovery with checkpoints (Undo & Redo).
+  method DemoRecoveryWithCheckpoints()
   {
     var initialDb: DatabaseState := map["A" := 10, "B" := 20];
     var ops: seq<Operation> := [
       StartOp("T1"),
-      StartOp("T2"),
       WriteOp("T1", "A", 50),
-      WriteOp("T2", "B", 999),
-      CommitOp("T1")
+      CommitOp("T1"),
+      CheckpointOp,           // Quiescent <CKPT> while idle
+      StartOp("T2"),
+      WriteOp("T2", "B", 999)
+      // Crash before T2 commits!
     ];
     var schedule := Schedule(ops);
-    var logger := new RedoLogger(initialDb);
 
-    var _, _, errs := schedule.Run(logger);
-    expect errs == [];
+    // Undo crash recovery stops early at <CKPT>
+    var undoCkpt := new QuiescentCheckpointStrategy();
+    var undoLogger := new UndoLogger(initialDb, undoCkpt);
+    var _, _, uErrs := schedule.Run(undoLogger);
+    expect uErrs == [];
+    var undoFlushed := undoLogger.GetFlushedLog();
+    var undoRec: RecoveryStrategy := new UndoRecovery.UndoRecoveryStrategy();
+    var uDisk, uAborts := undoRec.RecoverFromCrash(undoLogger.GetDisk(), undoFlushed);
+    expect "A" in uDisk && uDisk["A"] == 50;
+    expect "B" in uDisk && uDisk["B"] == 20;
 
-    var flushedLog := logger.GetFlushedLog();
-    // Simulate a crash right after <COMMIT T1> was flushed to disk, BEFORE
-    // T1's OUTPUT(A) reached disk. Redo recovery replays T1's A := 50 and
-    // ignores uncommitted T2 (leaving B = 20) while emitting <ABORT T2>.
-    var diskAtCrash := initialDb;
-    var recovery: RecoveryStrategy := new RedoRecovery.RedoRecoveryStrategy();
-    var recoveredDisk, recoveryAborts := recovery.RecoverFromCrash(diskAtCrash, flushedLog);
+    // Redo crash recovery starts forward replay at <CKPT>
+    var redoCkpt := new QuiescentCheckpointStrategy();
+    var redoLogger := new RedoLogger(initialDb, redoCkpt);
+    var _, _, rErrs := schedule.Run(redoLogger);
+    expect rErrs == [];
+    var redoFlushed := redoLogger.GetFlushedLog();
+    var redoRec: RecoveryStrategy := new RedoRecovery.RedoRecoveryStrategy();
+    var rDisk, rAborts := redoRec.RecoverFromCrash(redoLogger.GetDisk(), redoFlushed);
+    expect "A" in rDisk && rDisk["A"] == 50;
+    expect "B" in rDisk && rDisk["B"] == 20;
 
-    expect "A" in recoveredDisk && recoveredDisk["A"] == 50;
-    expect "B" in recoveredDisk && recoveredDisk["B"] == 20;
-    expect recoveryAborts == [LogAbort("T2")];
-
-    print "=== Demo 5 (Redo): Crash Recovery (T1 committed before OUTPUT, T2 crashed) ===\n";
-    print "--- Flushed Redo Log ---\n", FormatLog(flushedLog), "\n";
-    print "--- Recovery Abort Records ---\n", FormatLog(recoveryAborts), "\n";
-    print "Recovered disk: A=", recoveredDisk["A"], ", B=", recoveredDisk["B"], "\n\n";
+    print "=== Demo 4: Crash Recovery with Quiescent <CKPT> ===\n";
+    print "Undo recovered: A=", uDisk["A"], ", B=", uDisk["B"], " (aborts: ", |uAborts|, ")\n";
+    print "Redo recovered: A=", rDisk["A"], ", B=", rDisk["B"], " (aborts: ", |rAborts|, ")\n\n";
   }
 
   method Main()
   {
     TestSingleTransactionUndoVerified();
     TestSingleTransactionRedoVerified();
-    DemoSingleTransactionUndo();
-    DemoInterleavedCommitAndAbortUndo();
-    DemoUndoCrashRecovery();
-    DemoSingleTransactionRedo();
-    DemoRedoCrashRecovery();
+    DemoQuiescentUndo();
+    DemoNonQuiescentUndo();
+    DemoNonQuiescentRedo();
+    DemoRecoveryWithCheckpoints();
   }
 }

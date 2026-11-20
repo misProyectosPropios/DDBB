@@ -14,9 +14,11 @@
 // `LoggingStrategy`.
 
 include "Types.dfy"
+include "Checkpointing.dfy"
 
 module LoggingDispatch {
   import opened LoggingTypes
+  import opened Checkpointing
 
   // ---------------------------------------------------------------------------
   // Operation datatype (visited elements)
@@ -28,6 +30,7 @@ module LoggingDispatch {
     | WriteOp(tx: TxId, element: ElementId, newValue: Value)
     | CommitOp(tx: TxId)
     | AbortOp(tx: TxId)
+    | CheckpointOp
   {
     // Dispatches this operation to the corresponding Visit* method on `visitor`.
     method Accept(visitor: LoggingStrategy)
@@ -43,6 +46,7 @@ module LoggingDispatch {
         case WriteOp(tx, element, newValue) => visitor.VisitWrite(tx, element, newValue);
         case CommitOp(tx) => visitor.VisitCommit(tx);
         case AbortOp(tx) => visitor.VisitAbort(tx);
+        case CheckpointOp => visitor.VisitCheckpoint();
       }
     }
   }
@@ -88,6 +92,13 @@ module LoggingDispatch {
       ensures old(trace) <= trace
 
     method VisitAbort(tx: TxId)
+      requires Valid()
+      modifies this
+      ensures Valid()
+      ensures old(log) <= log
+      ensures old(trace) <= trace
+
+    method VisitCheckpoint()
       requires Valid()
       modifies this
       ensures Valid()
@@ -143,6 +154,9 @@ module LoggingDispatch {
       reads this
 
     function GetAbortedTxs(): set<TxId>
+      reads this
+
+    function GetCheckpointState(): CheckpointState
       reads this
   }
 

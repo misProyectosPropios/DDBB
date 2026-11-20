@@ -8,14 +8,27 @@ module LoggingTypes {
   type Value = int
   type DatabaseState = map<ElementId, Value>
 
-  // Log records for Undo and Redo logging (checkpoint records will be
-  // introduced in a later module).
+  // Log records for Undo and Redo logging, including quiescent (<CKPT>) and
+  // non-quiescent (<START CKPT(...)>, <END CKPT>) checkpointing.
   datatype LogRecord =
     | LogStart(tx: TxId)
     | LogUndoUpdate(tx: TxId, element: ElementId, oldValue: Value)
     | LogRedoUpdate(tx: TxId, element: ElementId, newValue: Value)
     | LogCommit(tx: TxId)
     | LogAbort(tx: TxId)
+    | LogCheckpoint
+    | LogStartCheckpoint(activeTxs: seq<TxId>)
+    | LogEndCheckpoint
+
+  predicate IsTxRecord(r: LogRecord)
+  {
+    r.LogStart? || r.LogUndoUpdate? || r.LogRedoUpdate? || r.LogCommit? || r.LogAbort?
+  }
+
+  predicate IsCheckpointRecord(r: LogRecord)
+  {
+    r.LogCheckpoint? || r.LogStartCheckpoint? || r.LogEndCheckpoint?
+  }
 
   // Step-by-step execution trace showing log emissions alongside buffer reads,
   // buffer writes, rollback restores, WAL flushes (FLUSH LOG), and disk writes
@@ -77,6 +90,25 @@ module LoggingTypes {
     StartedTxs(flushedLog) - FinishedTxs(flushedLog)
   }
 
+  // Deterministic active-transaction sequence maintenance (for formatting
+  // <START CKPT(T1, T2, ...)>).
+  function RemoveTx(s: seq<TxId>, tx: TxId): seq<TxId>
+    decreases |s|
+  {
+    if |s| == 0 then []
+    else if s[0] == tx then RemoveTx(s[1..], tx)
+    else [s[0]] + RemoveTx(s[1..], tx)
+  }
+
+  lemma LemmaRemoveTxMembership(s: seq<TxId>, tx: TxId)
+    ensures forall t :: t in RemoveTx(s, tx) <==> (t in s && t != tx)
+    decreases |s|
+  {
+    if |s| > 0 {
+      LemmaRemoveTxMembership(s[1..], tx);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Formal Undo Logging specification predicates
   // ---------------------------------------------------------------------------
@@ -102,6 +134,18 @@ module LoggingTypes {
   {
     forall i :: 0 <= i < |log| && (log[i].LogCommit? || log[i].LogAbort?) ==>
       exists s :: 0 <= s < i && log[s] == LogStart(log[i].tx)
+  }
+
+  ghost predicate HasStartCheckpoint(log: seq<LogRecord>)
+  {
+    exists i :: 0 <= i < |log| && log[i].LogStartCheckpoint?
+  }
+
+  // Every <END CKPT> record must be preceded by a <START CKPT(...)> record.
+  ghost predicate EndCheckpointHasStartBefore(log: seq<LogRecord>)
+  {
+    forall i :: 0 <= i < |log| && log[i].LogEndCheckpoint? ==>
+      exists s :: 0 <= s < i && log[s].LogStartCheckpoint?
   }
 
   // Every in-memory write is immediately preceded by its Undo update record
@@ -342,8 +386,13 @@ module LoggingTypes {
 
   lemma LemmaAppendLogPreservesLifecycle(log: seq<LogRecord>, rec: LogRecord)
     requires StartBeforeEnd(log)
+    requires EndCheckpointHasStartBefore(log)
     requires (rec.LogCommit? || rec.LogAbort?) ==> HasStart(log, rec.tx)
+    requires rec.LogEndCheckpoint? ==> HasStartCheckpoint(log)
     ensures StartBeforeEnd(log + [rec])
+    ensures EndCheckpointHasStartBefore(log + [rec])
+    ensures HasStartCheckpoint(log) ==> HasStartCheckpoint(log + [rec])
+    ensures rec.LogStartCheckpoint? ==> HasStartCheckpoint(log + [rec])
     ensures forall tx :: HasStart(log, tx) ==> HasStart(log + [rec], tx)
     ensures forall tx :: HasCommit(log, tx) ==> HasCommit(log + [rec], tx)
     ensures forall tx :: HasAbort(log, tx) ==> HasAbort(log + [rec], tx)
@@ -362,6 +411,24 @@ module LoggingTypes {
         var s :| 0 <= s < |log| && log[s] == LogStart(rec.tx);
         assert 0 <= s < i && log'[s] == LogStart(log'[i].tx);
       }
+    }
+    forall i | 0 <= i < |log'| && log'[i].LogEndCheckpoint?
+      ensures exists s :: 0 <= s < i && log'[s].LogStartCheckpoint?
+    {
+      if i < |log| {
+        var s :| 0 <= s < i && log[s].LogStartCheckpoint?;
+        assert log'[s].LogStartCheckpoint?;
+      } else {
+        var s :| 0 <= s < |log| && log[s].LogStartCheckpoint?;
+        assert 0 <= s < i && log'[s].LogStartCheckpoint?;
+      }
+    }
+    if HasStartCheckpoint(log) {
+      var s :| 0 <= s < |log| && log[s].LogStartCheckpoint?;
+      assert log'[s].LogStartCheckpoint?;
+    }
+    if rec.LogStartCheckpoint? {
+      assert log'[|log|].LogStartCheckpoint?;
     }
     forall tx | HasStart(log, tx)
       ensures HasStart(log', tx)
@@ -418,6 +485,14 @@ module LoggingTypes {
     else NatToString(n)
   }
 
+  function JoinTxIds(txs: seq<TxId>): string
+    decreases |txs|
+  {
+    if |txs| == 0 then ""
+    else if |txs| == 1 then txs[0]
+    else txs[0] + ", " + JoinTxIds(txs[1..])
+  }
+
   function FormatLogRecord(r: LogRecord): string
   {
     match r
@@ -431,6 +506,12 @@ module LoggingTypes {
       "<COMMIT " + tx + ">"
     case LogAbort(tx) =>
       "<ABORT " + tx + ">"
+    case LogCheckpoint =>
+      "<CKPT>"
+    case LogStartCheckpoint(txs) =>
+      "<START CKPT(" + JoinTxIds(txs) + ")>"
+    case LogEndCheckpoint =>
+      "<END CKPT>"
   }
 
   function FormatTraceEvent(e: TraceEvent): string

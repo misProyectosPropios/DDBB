@@ -46,6 +46,7 @@ module UndoRecovery {
       recoveredDisk := diskAtCrash;
       recoveryAborts := [];
       var abortedSet: set<TxId> := {};
+      var sawEndCkpt := false;
 
       var idx := |flushedLog|;
       while idx > 0
@@ -87,6 +88,20 @@ module UndoRecovery {
                 }
               }
             }
+          case LogCheckpoint => {
+            // Quiescent checkpoint: all prior transactions finished before <CKPT>.
+            break;
+          }
+          case LogEndCheckpoint => {
+            // Mark that a completed non-quiescent checkpoint was seen.
+            sawEndCkpt := true;
+          }
+          case LogStartCheckpoint(_) => {
+            // If its matching <END CKPT> was seen, all earlier transactions finished.
+            if sawEndCkpt {
+              break;
+            }
+          }
           case LogRedoUpdate(_, _, _) => {
             // Undo recovery ignores Redo update records.
           }

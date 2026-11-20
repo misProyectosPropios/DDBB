@@ -302,6 +302,14 @@ module UndoLogging {
         invariant preLen <= |trace|
         invariant preTrace <= trace
         invariant trace[..preLen] == preTrace
+        invariant log == old(log)
+        invariant flushedLogLen == |log|
+        invariant buffer == old(buffer)
+        invariant activeTxs == old(activeTxs)
+        invariant committedTxs == old(committedTxs)
+        invariant abortedTxs == old(abortedTxs)
+        invariant dirtyElements == old(dirtyElements)
+        invariant errors == old(errors)
         invariant forall j :: preLen <= j < |trace| ==> trace[j].EventOutput?
         invariant forall m :: 0 <= m < k ==>
           exists o :: preLen <= o < |trace| && trace[o].EventOutput? && trace[o].element == dirty[m]
@@ -439,6 +447,14 @@ module UndoLogging {
         invariant 0 <= idx <= |log|
         invariant Valid()
         invariant preTrace <= trace
+        invariant log == old(log)
+        invariant flushedLogLen == old(flushedLogLen)
+        invariant disk == old(disk)
+        invariant activeTxs == old(activeTxs)
+        invariant committedTxs == old(committedTxs)
+        invariant abortedTxs == old(abortedTxs)
+        invariant dirtyElements == old(dirtyElements)
+        invariant errors == old(errors)
         decreases idx
       {
         idx := idx - 1;
@@ -562,23 +578,6 @@ module UndoLogging {
       reads this
     {
       abortedTxs
-    }
-  }
-
-  // Helper lemma: any EventLog at index `k` in `t` appears at some index in `ExtractLog(t)`.
-  lemma LemmaEventLogInExtractLog(t: seq<TraceEvent>, k: int)
-    requires 0 <= k < |t|
-    requires t[k].EventLog?
-    ensures exists idx :: 0 <= idx < |ExtractLog(t)| && ExtractLog(t)[idx] == t[k].record
-    decreases |t|
-  {
-    if k == |t| - 1 {
-      var prev := ExtractLog(t[..|t| - 1]);
-      assert ExtractLog(t)[|prev|] == t[k].record;
-    } else {
-      LemmaEventLogInExtractLog(t[..|t| - 1], k);
-      var idx :| 0 <= idx < |ExtractLog(t[..|t| - 1])| && ExtractLog(t[..|t| - 1])[idx] == t[k].record;
-      assert ExtractLog(t)[idx] == t[k].record;
     }
   }
 

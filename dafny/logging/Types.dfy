@@ -8,11 +8,12 @@ module LoggingTypes {
   type Value = int
   type DatabaseState = map<ElementId, Value>
 
-  // Pure Undo log records (no checkpoints yet; quiescent/non-quiescent
-  // checkpoints and Redo / Undo-Redo records will be introduced later).
+  // Log records for Undo and Redo logging (checkpoint records will be
+  // introduced in a later module).
   datatype LogRecord =
     | LogStart(tx: TxId)
     | LogUndoUpdate(tx: TxId, element: ElementId, oldValue: Value)
+    | LogRedoUpdate(tx: TxId, element: ElementId, newValue: Value)
     | LogCommit(tx: TxId)
     | LogAbort(tx: TxId)
 
@@ -50,6 +51,30 @@ module LoggingTypes {
       var last := t[|t| - 1];
       if last.EventFlushLog? then last.flushedCount
       else LastFlushedCount(t[..|t| - 1])
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shared log transaction classification helpers (used by Undo & Redo recovery)
+  // ---------------------------------------------------------------------------
+
+  function FinishedTxs(flushedLog: seq<LogRecord>): set<TxId>
+  {
+    set i | 0 <= i < |flushedLog| && (flushedLog[i].LogCommit? || flushedLog[i].LogAbort?) :: flushedLog[i].tx
+  }
+
+  function CommittedTxs(flushedLog: seq<LogRecord>): set<TxId>
+  {
+    set i | 0 <= i < |flushedLog| && flushedLog[i].LogCommit? :: flushedLog[i].tx
+  }
+
+  function StartedTxs(flushedLog: seq<LogRecord>): set<TxId>
+  {
+    set i | 0 <= i < |flushedLog| && flushedLog[i].LogStart? :: flushedLog[i].tx
+  }
+
+  function IncompleteTxs(flushedLog: seq<LogRecord>): set<TxId>
+  {
+    StartedTxs(flushedLog) - FinishedTxs(flushedLog)
   }
 
   // ---------------------------------------------------------------------------
@@ -105,6 +130,55 @@ module LoggingTypes {
       var tx := t[i].record.tx;
       forall j :: 0 <= j < i && t[j].EventWriteBuffer? && t[j].tx == tx ==>
         exists o :: j < o < i && t[o].EventOutput? && t[o].element == t[j].element
+  }
+
+  // ---------------------------------------------------------------------------
+  // Formal Redo Logging specification predicates (Garcia-Molina Rule R1)
+  // ---------------------------------------------------------------------------
+
+  // Every in-memory write is immediately preceded by its Redo update record
+  // <T, X, newVal>.
+  ghost predicate WriteHasRedoLogBefore(t: seq<TraceEvent>)
+  {
+    forall j :: 0 <= j < |t| && t[j].EventWriteBuffer? ==>
+      j > 0 && t[j - 1] == EventLog(LogRedoUpdate(t[j].tx, t[j].element, t[j].newVal))
+  }
+
+  // Redo Logging Rule R1 (Write-Ahead Logging + Commit Before Disk Output):
+  // Before any modified element is written to disk (OUTPUT), both its Redo
+  // update record <T, X, newVal> and <COMMIT T> must already have been emitted
+  // and flushed to disk.
+  ghost predicate {:opaque} RuleR1_FlushAndCommitBeforeOutput(t: seq<TraceEvent>)
+  {
+    forall i :: 0 <= i < |t| && t[i].EventOutput? ==>
+      LastFlushedCount(t[..i]) == |ExtractLog(t[..i])| &&
+      exists c, u, tx ::
+        0 <= u < c < i &&
+        t[u] == EventLog(LogRedoUpdate(tx, t[i].element, t[i].value)) &&
+        t[c] == EventLog(LogCommit(tx))
+  }
+
+  lemma LemmaEmptyTraceRuleR1()
+    ensures RuleR1_FlushAndCommitBeforeOutput([])
+  {
+    reveal RuleR1_FlushAndCommitBeforeOutput();
+  }
+
+  // Shared helper: any EventLog at index `k` in `t` appears in `ExtractLog(t)`.
+  lemma LemmaEventLogInExtractLog(t: seq<TraceEvent>, k: int)
+    requires 0 <= k < |t|
+    requires t[k].EventLog?
+    ensures exists idx :: 0 <= idx < |ExtractLog(t)| && ExtractLog(t)[idx] == t[k].record
+    decreases |t|
+  {
+    if k == |t| - 1 {
+      var prev := ExtractLog(t[..|t| - 1]);
+      assert ExtractLog(t)[|prev|] == t[k].record;
+    } else {
+      LemmaEventLogInExtractLog(t[..|t| - 1], k);
+      var idx :| 0 <= idx < |ExtractLog(t[..|t| - 1])| && ExtractLog(t[..|t| - 1])[idx] == t[k].record;
+      assert ExtractLog(t)[idx] == t[k].record;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -207,6 +281,65 @@ module LoggingTypes {
     LemmaAppendNonCommitPreservesRuleU2(t, e);
   }
 
+  lemma LemmaAppendPreservesRuleR1(t: seq<TraceEvent>, e: TraceEvent)
+    requires RuleR1_FlushAndCommitBeforeOutput(t)
+    requires e.EventOutput? ==>
+      LastFlushedCount(t) == |ExtractLog(t)| &&
+      exists c, u, tx ::
+        0 <= u < c < |t| &&
+        t[u] == EventLog(LogRedoUpdate(tx, e.element, e.value)) &&
+        t[c] == EventLog(LogCommit(tx))
+    ensures RuleR1_FlushAndCommitBeforeOutput(t + [e])
+  {
+    reveal RuleR1_FlushAndCommitBeforeOutput();
+    var t' := t + [e];
+    forall i | 0 <= i < |t'| && t'[i].EventOutput?
+      ensures LastFlushedCount(t'[..i]) == |ExtractLog(t'[..i])| &&
+        exists c, u, tx ::
+          0 <= u < c < i &&
+          t'[u] == EventLog(LogRedoUpdate(tx, t'[i].element, t'[i].value)) &&
+          t'[c] == EventLog(LogCommit(tx))
+    {
+      if i < |t| {
+        assert t'[..i] == t[..i];
+        var c, u, tx :| 0 <= u < c < i &&
+          t[u] == EventLog(LogRedoUpdate(tx, t[i].element, t[i].value)) &&
+          t[c] == EventLog(LogCommit(tx));
+        assert t'[u] == t[u] && t'[c] == t[c];
+      } else {
+        assert i == |t|;
+        assert t'[..i] == t;
+        var c, u, tx :| 0 <= u < c < |t| &&
+          t[u] == EventLog(LogRedoUpdate(tx, e.element, e.value)) &&
+          t[c] == EventLog(LogCommit(tx));
+        assert t'[u] == t[u] && t'[c] == t[c];
+      }
+    }
+  }
+
+  lemma LemmaAppendNonWritePreservesRedoTrace(t: seq<TraceEvent>, e: TraceEvent)
+    requires !e.EventWriteBuffer?
+    requires WriteHasRedoLogBefore(t)
+    requires RuleR1_FlushAndCommitBeforeOutput(t)
+    requires e.EventOutput? ==>
+      LastFlushedCount(t) == |ExtractLog(t)| &&
+      exists c, u, tx ::
+        0 <= u < c < |t| &&
+        t[u] == EventLog(LogRedoUpdate(tx, e.element, e.value)) &&
+        t[c] == EventLog(LogCommit(tx))
+    ensures var t' := t + [e];
+      t <= t' &&
+      t'[..|t|] == t &&
+      ExtractLog(t') == (if e.EventLog? then ExtractLog(t) + [e.record] else ExtractLog(t)) &&
+      LastFlushedCount(t') == (if e.EventFlushLog? then e.flushedCount else LastFlushedCount(t)) &&
+      WriteHasRedoLogBefore(t') &&
+      RuleR1_FlushAndCommitBeforeOutput(t')
+  {
+    var t' := t + [e];
+    assert t'[..|t|] == t;
+    LemmaAppendPreservesRuleR1(t, e);
+  }
+
   lemma LemmaAppendLogPreservesLifecycle(log: seq<LogRecord>, rec: LogRecord)
     requires StartBeforeEnd(log)
     requires (rec.LogCommit? || rec.LogAbort?) ==> HasStart(log, rec.tx)
@@ -292,6 +425,8 @@ module LoggingTypes {
       "<START " + tx + ">"
     case LogUndoUpdate(tx, elem, oldVal) =>
       "<" + tx + ", " + elem + ", " + IntToString(oldVal) + ">"
+    case LogRedoUpdate(tx, elem, newVal) =>
+      "<" + tx + ", " + elem + ", " + IntToString(newVal) + ">"
     case LogCommit(tx) =>
       "<COMMIT " + tx + ">"
     case LogAbort(tx) =>

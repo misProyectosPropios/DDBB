@@ -123,6 +123,42 @@ module LoggingDispatch {
     {
       errors
     }
+
+    // Shared state-inspection interface implemented by every concrete logger
+    // (UndoLogger, RedoLogger, and future Undo/Redo or checkpointing loggers).
+    function GetFlushedLog(): seq<LogRecord>
+      requires Valid()
+      reads this
+
+    function GetDisk(): DatabaseState
+      reads this
+
+    function GetBuffer(): DatabaseState
+      reads this
+
+    function GetActiveTxs(): set<TxId>
+      reads this
+
+    function GetCommittedTxs(): set<TxId>
+      reads this
+
+    function GetAbortedTxs(): set<TxId>
+      reads this
+  }
+
+  // ---------------------------------------------------------------------------
+  // RecoveryStrategy interface (implemented by UndoRecoveryStrategy &
+  // RedoRecoveryStrategy)
+  // ---------------------------------------------------------------------------
+
+  trait RecoveryStrategy extends object {
+    method RecoverFromCrash(diskAtCrash: DatabaseState, flushedLog: seq<LogRecord>)
+      returns (recoveredDisk: DatabaseState, recoveryAborts: seq<LogRecord>)
+      ensures recoveredDisk.Keys == diskAtCrash.Keys
+      ensures forall k :: 0 <= k < |recoveryAborts| ==>
+        recoveryAborts[k].LogAbort? && recoveryAborts[k].tx !in FinishedTxs(flushedLog)
+      ensures forall i, j :: 0 <= i < j < |recoveryAborts| ==>
+        recoveryAborts[i].tx != recoveryAborts[j].tx
   }
 
   // ---------------------------------------------------------------------------

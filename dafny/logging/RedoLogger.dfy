@@ -216,7 +216,7 @@ module RedoLogging {
       ensures Valid()
       ensures old(log) <= log
       ensures old(trace) <= trace
-      ensures (old(checkpointStrategy.CanStartTransaction(ckptState)) &&
+      ensures (old(ckptState.CkptIdle?) &&
                old(tx !in (activeTxs + committedTxs + abortedTxs))) ==>
         log == old(log) + [LogStart(tx)] &&
         activeTxs == old(activeTxs) + {tx} &&
@@ -745,7 +745,7 @@ module RedoLogging {
         tx !in activeTxs &&
         errors == old(errors)
       ensures (old(tx in activeTxs) && old(ckptState == CkptIdle)) ==>
-        log == old(log) + [LogCommit(tx)] + checkpointStrategy.OnTransactionFinished(CkptIdle, tx, activeTxs).1
+        log == old(log) + [LogCommit(tx)]
     {
       if tx !in activeTxs {
         errors := errors + ["Cannot COMMIT " + tx + ": transaction is not active."];

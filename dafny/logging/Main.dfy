@@ -29,6 +29,7 @@ module Main {
     var ckpt := new NoCheckpointStrategy();
     var logger := new UndoLogger(initialDb, ckpt);
 
+    assert "T1" !in (logger.activeTxs + logger.committedTxs + logger.abortedTxs);
     logger.VisitStart("T1");
     assert logger.log == [LogStart("T1")];
 
@@ -66,6 +67,7 @@ module Main {
     var ckpt := new NoCheckpointStrategy();
     var logger := new RedoLogger(initialDb, ckpt);
 
+    assert "T1" !in (logger.activeTxs + logger.committedTxs + logger.abortedTxs);
     logger.VisitStart("T1");
     assert logger.log == [LogStart("T1")];
 

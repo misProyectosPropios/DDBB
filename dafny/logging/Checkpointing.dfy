@@ -71,6 +71,7 @@ module Checkpointing {
 
     // Whether a new transaction is allowed to START in `state`.
     function CanStartTransaction(state: CheckpointState): bool
+      ensures state.CkptIdle? ==> CanStartTransaction(state)
 
     function BlockedStartMessage(tx: TxId): string
 
@@ -112,6 +113,7 @@ module Checkpointing {
         var nextState := res.0;
         var recs := res.1;
         ValidCheckpointEmission(recs, state.CkptActiveNonQuiescent?) &&
+        (state.CkptIdle? ==> nextState == CkptIdle && recs == []) &&
         (nextState.CkptDrainingQuiescent? ==> remainingActiveTxs != {}) &&
         (nextState.CkptActiveNonQuiescent? ==>
           nextState.watchedTxs <= remainingActiveTxs &&
@@ -128,7 +130,9 @@ module Checkpointing {
 
     function Name(): string { "None" }
 
-    function CanStartTransaction(state: CheckpointState): bool { true }
+    function CanStartTransaction(state: CheckpointState): bool
+      ensures state.CkptIdle? ==> CanStartTransaction(state)
+    { true }
 
     function BlockedStartMessage(tx: TxId): string { "" }
 
@@ -165,6 +169,7 @@ module Checkpointing {
         var nextState := res.0;
         var recs := res.1;
         ValidCheckpointEmission(recs, state.CkptActiveNonQuiescent?) &&
+        (state.CkptIdle? ==> nextState == CkptIdle && recs == []) &&
         (nextState.CkptDrainingQuiescent? ==> remainingActiveTxs != {}) &&
         (nextState.CkptActiveNonQuiescent? ==>
           nextState.watchedTxs <= remainingActiveTxs &&
@@ -186,6 +191,7 @@ module Checkpointing {
     function Name(): string { "Quiescent" }
 
     function CanStartTransaction(state: CheckpointState): bool
+      ensures state.CkptIdle? ==> CanStartTransaction(state)
     {
       !state.CkptDrainingQuiescent?
     }
@@ -233,6 +239,7 @@ module Checkpointing {
         var nextState := res.0;
         var recs := res.1;
         ValidCheckpointEmission(recs, state.CkptActiveNonQuiescent?) &&
+        (state.CkptIdle? ==> nextState == CkptIdle && recs == []) &&
         (nextState.CkptDrainingQuiescent? ==> remainingActiveTxs != {}) &&
         (nextState.CkptActiveNonQuiescent? ==>
           nextState.watchedTxs <= remainingActiveTxs &&
@@ -263,7 +270,9 @@ module Checkpointing {
 
     function Name(): string { "Non-Quiescent" }
 
-    function CanStartTransaction(state: CheckpointState): bool { true }
+    function CanStartTransaction(state: CheckpointState): bool
+      ensures state.CkptIdle? ==> CanStartTransaction(state)
+    { true }
 
     function BlockedStartMessage(tx: TxId): string { "" }
 
@@ -307,6 +316,7 @@ module Checkpointing {
         var nextState := res.0;
         var recs := res.1;
         ValidCheckpointEmission(recs, state.CkptActiveNonQuiescent?) &&
+        (state.CkptIdle? ==> nextState == CkptIdle && recs == []) &&
         (nextState.CkptDrainingQuiescent? ==> remainingActiveTxs != {}) &&
         (nextState.CkptActiveNonQuiescent? ==>
           nextState.watchedTxs <= remainingActiveTxs &&

@@ -101,7 +101,9 @@ module Serializability {
   // `targetSerial` is serial, both perform the exact same per-transaction
   // reads/writes, and every conflict in `s1` respects the transaction order
   // in `targetSerial`.
-  predicate IsConflictSerializableTo(s1: seq<SchedOp>, targetSerial: seq<SchedOp>)
+  // Marked {:opaque} so callers with concrete schedules evaluate it at runtime
+  // without causing cubic quantifier blowup in Z3.
+  opaque predicate IsConflictSerializableTo(s1: seq<SchedOp>, targetSerial: seq<SchedOp>)
   {
     var d1 := DataOps(s1);
     var d2 := DataOps(targetSerial);
@@ -142,6 +144,7 @@ module Serializability {
     requires IsSerial(DataOps(s))
     ensures IsConflictSerializableTo(s, s)
   {
+    reveal IsConflictSerializableTo();
     var d := DataOps(s);
     forall i, j | 0 <= i < j < |d| && Conflicts(d[i], d[j])
       ensures FirstTxIndex(d, d[i].tx) < FirstTxIndex(d, d[j].tx)
@@ -173,6 +176,7 @@ module Serializability {
     ensures var d1 := DataOps(s1);
       !(d1[i1].tx == d1[j2].tx && d1[j1].tx == d1[i2].tx)
   {
+    reveal IsConflictSerializableTo();
     var d1 := DataOps(s1);
     var d2 := DataOps(targetSerial);
     assert FirstTxIndex(d2, d1[i1].tx) < FirstTxIndex(d2, d1[j1].tx);

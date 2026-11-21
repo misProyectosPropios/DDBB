@@ -16,7 +16,9 @@ module PessimisticScheduling {
   import opened Serializability
 
   // Pure recursive specification of running `policy` over `ops` from `initState`.
-  function RunPolicySpec(
+  // Marked {:opaque} so callers with long concrete schedules do not trigger
+  // exponential symbolic unrolling in Z3.
+  opaque function RunPolicySpec(
     policy: LockPolicy,
     ops: seq<SchedOp>,
     initState: LockTableState
@@ -50,6 +52,7 @@ module PessimisticScheduling {
       ensures isValid <==> |errors| == 0
       ensures (isValid, finalState) == RunPolicySpec(policy, ops, EmptyLockTableState())
     {
+      reveal RunPolicySpec();
       finalState := EmptyLockTableState();
       errors := [];
       isValid := true;

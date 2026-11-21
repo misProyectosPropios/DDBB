@@ -6,9 +6,10 @@ module SchedulerTypes {
   type TxId = string
   type ElementId = string
 
-  // Lock modes for multiple-mode locking (Shared / Exclusive).
+  // Lock modes: Shared (S), Update (U), and Exclusive (X).
   datatype LockMode =
     | Shared
+    | Update
     | Exclusive
 
   // Immutable snapshot of the scheduler's lock table and 2PL transaction phases.
@@ -98,6 +99,7 @@ module SchedulerTypes {
   {
     match mode
     case Shared => "S"
+    case Update => "U"
     case Exclusive => "X"
   }
 }

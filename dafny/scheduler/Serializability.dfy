@@ -40,8 +40,9 @@ module Serializability {
   // contiguous block (no interleaving between transactions).
   predicate IsSerial(dataOps: seq<SchedOp>)
   {
-    forall i, j, k :: 0 <= i < j < k < |dataOps| &&
-      dataOps[i].tx == dataOps[k].tx ==> dataOps[j].tx == dataOps[i].tx
+    forall i, j, k ::
+      (0 <= i < j < k < |dataOps| &&
+       dataOps[i].tx == dataOps[k].tx) ==> dataOps[j].tx == dataOps[i].tx
   }
 
   function TxSet(dataOps: seq<SchedOp>): set<TxId>

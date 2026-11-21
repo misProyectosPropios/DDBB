@@ -111,8 +111,10 @@ module LockPolicies {
         (!SupportsMode(mode) ==> !res.allowed) &&
         ((tx in state.finishedTxs || tx in state.shrinkingTxs) ==> !res.allowed) &&
         ((HoldsLock(state, tx, element) && !CanUpgrade(GetLockMode(state, tx, element), mode)) ==> !res.allowed) &&
-        (forall other :: other in HoldersOf(state, element) && other != tx &&
-            !Compatible(HoldersOf(state, element)[other], mode) ==> !res.allowed) &&
+        (forall other ::
+          (other in HoldersOf(state, element) &&
+           other != tx &&
+           !Compatible(HoldersOf(state, element)[other], mode)) ==> !res.allowed) &&
         ((SupportsMode(mode) &&
           tx !in state.finishedTxs &&
           tx !in state.shrinkingTxs &&
@@ -225,8 +227,10 @@ module LockPolicies {
         (!SupportsMode(mode) ==> !res.allowed) &&
         ((tx in state.finishedTxs || tx in state.shrinkingTxs) ==> !res.allowed) &&
         ((HoldsLock(state, tx, element) && !CanUpgrade(GetLockMode(state, tx, element), mode)) ==> !res.allowed) &&
-        (forall other :: other in HoldersOf(state, element) && other != tx &&
-            !Compatible(HoldersOf(state, element)[other], mode) ==> !res.allowed) &&
+        (forall other ::
+          (other in HoldersOf(state, element) &&
+           other != tx &&
+           !Compatible(HoldersOf(state, element)[other], mode)) ==> !res.allowed) &&
         ((SupportsMode(mode) &&
           tx !in state.finishedTxs &&
           tx !in state.shrinkingTxs &&
@@ -473,8 +477,10 @@ module LockPolicies {
         (!SupportsMode(mode) ==> !res.allowed) &&
         ((tx in state.finishedTxs || tx in state.shrinkingTxs) ==> !res.allowed) &&
         ((HoldsLock(state, tx, element) && !CanUpgrade(GetLockMode(state, tx, element), mode)) ==> !res.allowed) &&
-        (forall other :: other in HoldersOf(state, element) && other != tx &&
-            !Compatible(HoldersOf(state, element)[other], mode) ==> !res.allowed) &&
+        (forall other ::
+          (other in HoldersOf(state, element) &&
+           other != tx &&
+           !Compatible(HoldersOf(state, element)[other], mode)) ==> !res.allowed) &&
         ((SupportsMode(mode) &&
           tx !in state.finishedTxs &&
           tx !in state.shrinkingTxs &&
@@ -701,8 +707,10 @@ module LockPolicies {
         (!SupportsMode(mode) ==> !res.allowed) &&
         ((tx in state.finishedTxs || tx in state.shrinkingTxs) ==> !res.allowed) &&
         ((HoldsLock(state, tx, element) && !CanUpgrade(GetLockMode(state, tx, element), mode)) ==> !res.allowed) &&
-        (forall other :: other in HoldersOf(state, element) && other != tx &&
-            !Compatible(HoldersOf(state, element)[other], mode) ==> !res.allowed) &&
+        (forall other ::
+          (other in HoldersOf(state, element) &&
+           other != tx &&
+           !Compatible(HoldersOf(state, element)[other], mode)) ==> !res.allowed) &&
         ((SupportsMode(mode) &&
           tx !in state.finishedTxs &&
           tx !in state.shrinkingTxs &&

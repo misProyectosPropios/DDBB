@@ -35,8 +35,19 @@ module DerModel {
     function Kind(): RelationKind
       reads this
 
+    // Subclass-specific cardinality invariant (1:1, 1:N, N:M, or general).
+    ghost predicate ValidCardinalities()
+      reads this
+
+    // Shared relation invariant guaranteed by every Relation, so callers
+    // holding the trait know `name != ""` and `UniqueAttributeNames(attributes)`.
     ghost predicate ValidRelation()
       reads this
+    {
+      name != "" &&
+      UniqueAttributeNames(attributes) &&
+      ValidCardinalities()
+    }
 
     function Describe(): string
       reads this
@@ -79,13 +90,11 @@ module DerModel {
       KindOneToOne
     }
 
-    ghost predicate ValidRelation()
+    ghost predicate ValidCardinalities()
       reads this
     {
-      name != "" &&
       IsSingle(sourceCard) &&
-      IsSingle(targetCard) &&
-      UniqueAttributeNames(attributes)
+      IsSingle(targetCard)
     }
   }
 
@@ -122,13 +131,11 @@ module DerModel {
       KindOneToMany
     }
 
-    ghost predicate ValidRelation()
+    ghost predicate ValidCardinalities()
       reads this
     {
-      name != "" &&
       IsSingle(sourceCard) &&
-      IsMany(targetCard) &&
-      UniqueAttributeNames(attributes)
+      IsMany(targetCard)
     }
   }
 
@@ -165,13 +172,11 @@ module DerModel {
       KindManyToMany
     }
 
-    ghost predicate ValidRelation()
+    ghost predicate ValidCardinalities()
       reads this
     {
-      name != "" &&
       IsMany(sourceCard) &&
-      IsMany(targetCard) &&
-      UniqueAttributeNames(attributes)
+      IsMany(targetCard)
     }
   }
 
@@ -211,13 +216,11 @@ module DerModel {
         KindManyToMany
     }
 
-    ghost predicate ValidRelation()
+    ghost predicate ValidCardinalities()
       reads this
     {
-      name != "" &&
       ValidCardinality(sourceCard) &&
-      ValidCardinality(targetCard) &&
-      UniqueAttributeNames(attributes)
+      ValidCardinality(targetCard)
     }
   }
 
@@ -235,14 +238,42 @@ module DerModel {
     (r1.name != r2.name || r1.target != r2.target || r1.Kind() != r2.Kind())
   }
 
+  // Discriminant allowing consumers (such as the DER -> RM converter) to
+  // inspect whether an EntityElement is a plain Entity or an Aggregation
+  // without needing runtime downcasts.
+  datatype AggregationInfo =
+    | NotAnAggregation
+    | AggregationOf(innerSource: EntityElement, innerRelation: Relation)
+
   trait EntityElement extends object {
     const name: Name
     const attributes: seq<Attribute>
     var relations: seq<Relation>
     ghost var Repr: set<object>
 
+    // Subclass-specific validity conditions (e.g., Entity requires a PK
+    // attribute; Aggregation requires a valid inner relationship).
+    ghost predicate ValidExtra()
+      reads this, Repr
+
+    // Shared validity invariant guaranteed by every EntityElement, so callers
+    // holding the trait (such as DerToRelational) know `name != ""` and that
+    // all attached relations are valid and distinct.
     ghost predicate Valid()
       reads this, Repr
+    {
+      name != "" &&
+      UniqueAttributeNames(attributes) &&
+      this in Repr &&
+      (forall i :: 0 <= i < |relations| ==> relations[i] in Repr) &&
+      (forall i :: 0 <= i < |relations| ==> relations[i] as object != this as object) &&
+      (forall i :: 0 <= i < |relations| ==> relations[i].ValidRelation()) &&
+      (forall i, j :: 0 <= i < j < |relations| ==> DistinctRelations(relations[i], relations[j])) &&
+      ValidExtra()
+    }
+
+    function AggregationDetails(): AggregationInfo
+      reads this
 
     // Attaches a new distinct relation to this entity/aggregation.
     method AddRelation(rel: Relation)
@@ -281,17 +312,16 @@ module DerModel {
       this.Repr := {this};
     }
 
-    ghost predicate Valid()
+    ghost predicate ValidExtra()
       reads this, Repr
     {
-      name != "" &&
-      UniqueAttributeNames(attributes) &&
-      HasKeyAttribute(attributes) &&
-      this in Repr &&
-      (forall i :: 0 <= i < |relations| ==> relations[i] in Repr) &&
-      (forall i :: 0 <= i < |relations| ==> relations[i] as object != this as object) &&
-      (forall i :: 0 <= i < |relations| ==> relations[i].ValidRelation()) &&
-      (forall i, j :: 0 <= i < j < |relations| ==> DistinctRelations(relations[i], relations[j]))
+      HasKeyAttribute(attributes)
+    }
+
+    function AggregationDetails(): AggregationInfo
+      reads this
+    {
+      NotAnAggregation
     }
 
     method AddRelation(rel: Relation)
@@ -341,21 +371,20 @@ module DerModel {
       this.Repr := {this, innerRelation};
     }
 
-    ghost predicate Valid()
+    ghost predicate ValidExtra()
       reads this, Repr
     {
-      name != "" &&
-      UniqueAttributeNames(attributes) &&
-      this in Repr &&
       innerRelation in Repr &&
       innerRelation as object != this as object &&
       innerRelation.ValidRelation() &&
       innerSource != this &&
-      innerRelation.target != this &&
-      (forall i :: 0 <= i < |relations| ==> relations[i] in Repr) &&
-      (forall i :: 0 <= i < |relations| ==> relations[i] as object != this as object) &&
-      (forall i :: 0 <= i < |relations| ==> relations[i].ValidRelation()) &&
-      (forall i, j :: 0 <= i < j < |relations| ==> DistinctRelations(relations[i], relations[j]))
+      innerRelation.target != this
+    }
+
+    function AggregationDetails(): AggregationInfo
+      reads this
+    {
+      AggregationOf(innerSource, innerRelation)
     }
 
     method AddRelation(rel: Relation)
@@ -420,6 +449,7 @@ module DerModel {
       ensures Valid()
       ensures source.Valid()
       ensures source.relations == old(source.relations) + [rel]
+      ensures source.Repr == old(source.Repr) + {rel}
     {
       assert source as object != this as object;
       source.AddRelation(rel);

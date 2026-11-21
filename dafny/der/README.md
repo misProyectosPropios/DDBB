@@ -15,4 +15,6 @@ Formally verified Entity-Relationship (DER) object model in Dafny with generaliz
     - `Entity` — standard DER entity with unique attribute names and a primary key.
     - `Aggregation` — composes an inner `(innerSource, innerRelation)` relationship so the aggregated relationship acts as an `EntityElement` that can participate in further relations.
   - **`DerDiagram`** — diagram container enforcing unique entity/aggregation names and valid relation endpoints.
-- **[Main.dfy](Main.dfy)** (`module Main`) — Statically verified DER construction demo (including `1:1`, `1:N`, `N:M`, custom finite bounds `2..5 -> 1..*`, and an `Aggregation` `Cursada` composing `Alumno --[Cursa]--> Materia` linked to `Examen`).
+- **[RelationalModel.dfy](RelationalModel.dfy)** (`module RelationalModel`) — `Column`, `ForeignKey`, `TableSchema`, `RelationalSchema`, well-formedness invariants (`ValidTable`, `ValidRelationalSchema`), and classic RM notation formatters.
+- **[DerToRelational.dfy](DerToRelational.dfy)** (`module DerToRelational`) — `ConvertDerToRelational(diagram)` implementing and formally verifying the ER-to-Relational conversion rules (Entities, Aggregations, N:M join tables with composite PKs, and 1:1 / 1:N / N:1 FK propagation).
+- **[Main.dfy](Main.dfy)** (`module Main`) — Statically verified DER construction + Relational Model conversion demo.

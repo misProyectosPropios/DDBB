@@ -6,10 +6,14 @@
 
 include "Types.dfy"
 include "Model.dfy"
+include "RelationalModel.dfy"
+include "DerToRelational.dfy"
 
 module Main {
   import opened DerTypes
   import opened DerModel
+  import opened RelationalModel
+  import opened DerToRelational
 
   // Statically verified construction of a DER diagram featuring 1:1, 1:N, N:M,
   // general cardinalities, and an Aggregation composing an N:M relationship.
@@ -107,6 +111,23 @@ module Main {
     assert cursada.innerSource == alumno;
 
     PrintDiagram(diagram);
+
+    // 7. Convert the DER diagram to the Relational Model!
+    assert diagram.elements == [persona, pasaporte, departamento, empleado, alumno, materia, examen, cursada];
+    reveal ConvertibleDiagram();
+    var rm := ConvertDerToRelational(diagram);
+    assert ValidRelationalSchema(rm);
+    assert HasTable(rm, "Persona");
+    assert HasTable(rm, "Pasaporte");
+    assert HasTable(rm, "Departamento");
+    assert HasTable(rm, "Empleado");
+    assert HasTable(rm, "Alumno");
+    assert HasTable(rm, "Materia");
+    assert HasTable(rm, "Examen");
+    assert HasTable(rm, "Cursada");
+
+    print "\n=== Converted Relational Model (RM) ===\n";
+    print FormatRelationalSchema(rm);
   }
 
   method PrintDiagram(diagram: DerDiagram)

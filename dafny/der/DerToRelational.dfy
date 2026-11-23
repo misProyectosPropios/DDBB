@@ -196,6 +196,7 @@ module DerToRelational {
         case AggregationOf(src, rel) =>
           src in diagram.elements &&
           rel in elem.Repr &&
+          rel as object != elem as object &&
           rel.ValidRelation() &&
           rel.target in diagram.elements &&
           src.AggregationDetails().NotAnAggregation? &&
@@ -285,7 +286,22 @@ module DerToRelational {
     reveal ConvertibleDiagram();
     ghost var sIdx :| 0 <= sIdx < |diagram.elements| && diagram.elements[sIdx] == source;
     assert diagram.elements[sIdx].Valid();
+    forall i | 0 <= i < |diagram.elements| && i != sIdx
+      ensures source as object !in diagram.elements[i].Repr
+    {
+      assert diagram.elements[sIdx] as object !in diagram.elements[i].Repr;
+    }
     diagram.LinkRelation(source, rel);
+    forall i | 0 <= i < |diagram.elements|
+      ensures diagram.elements[i].Valid()
+      ensures diagram.elements[i].AggregationDetails() == old(diagram.elements[i].AggregationDetails())
+    {
+      if i == sIdx {
+        assert diagram.elements[i] == source;
+      } else {
+        assert diagram.elements[i] != source;
+      }
+    }
   }
 
   // Extracts concrete element validity, non-empty names, and non-empty primary

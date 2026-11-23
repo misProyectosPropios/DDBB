@@ -23,6 +23,30 @@ module DerTests {
   import opened RelationalModel
   import opened DerToRelational
 
+  // Small helper that constructs a 2-attribute Entity (1 key + 1 non-key) and
+  // proves `UniqueAttributeNames` and `HasKeyAttribute` once in isolation.
+  method MakeTwoAttrEntity(
+    name: Name,
+    kName: Name,
+    kType: AttrType,
+    aName: Name,
+    aType: AttrType
+  ) returns (e: Entity)
+    requires name != "" && kName != aName
+    ensures fresh(e)
+    ensures e.Valid()
+    ensures e.name == name
+    ensures e.relations == []
+    ensures e.Repr == {e}
+  {
+    var attrs := [
+      Attribute(kName, kType, true),
+      Attribute(aName, aType, false)
+    ];
+    assert attrs[0].isKey;
+    e := new Entity(name, attrs);
+  }
+
   // Step 1: Creates and adds the 7 base entities while maintaining
   // `ConvertibleDiagram` incrementally (never revealing its quantifiers).
   method BuildBaseEntities()
@@ -55,46 +79,25 @@ module DerTests {
     diagram := new DerDiagram();
     LemmaEmptyDiagramConvertible(diagram);
 
-    persona := new Entity("Persona", [
-      Attribute("dni", AttrInt, true),
-      Attribute("nombre", AttrString, false)
-    ]);
+    persona := MakeTwoAttrEntity("Persona", "dni", AttrInt, "nombre", AttrString);
     AddConvertibleEntity(diagram, persona);
 
-    pasaporte := new Entity("Pasaporte", [
-      Attribute("numero", AttrString, true),
-      Attribute("vencimiento", AttrDate, false)
-    ]);
+    pasaporte := MakeTwoAttrEntity("Pasaporte", "numero", AttrString, "vencimiento", AttrDate);
     AddConvertibleEntity(diagram, pasaporte);
 
-    departamento := new Entity("Departamento", [
-      Attribute("codigo", AttrInt, true),
-      Attribute("nombre", AttrString, false)
-    ]);
+    departamento := MakeTwoAttrEntity("Departamento", "codigo", AttrInt, "nombre", AttrString);
     AddConvertibleEntity(diagram, departamento);
 
-    empleado := new Entity("Empleado", [
-      Attribute("legajo", AttrInt, true),
-      Attribute("salario", AttrDecimal, false)
-    ]);
+    empleado := MakeTwoAttrEntity("Empleado", "legajo", AttrInt, "salario", AttrDecimal);
     AddConvertibleEntity(diagram, empleado);
 
-    alumno := new Entity("Alumno", [
-      Attribute("padron", AttrInt, true),
-      Attribute("nombre", AttrString, false)
-    ]);
+    alumno := MakeTwoAttrEntity("Alumno", "padron", AttrInt, "nombre", AttrString);
     AddConvertibleEntity(diagram, alumno);
 
-    materia := new Entity("Materia", [
-      Attribute("codigo", AttrString, true),
-      Attribute("creditos", AttrInt, false)
-    ]);
+    materia := MakeTwoAttrEntity("Materia", "codigo", AttrString, "creditos", AttrInt);
     AddConvertibleEntity(diagram, materia);
 
-    examen := new Entity("Examen", [
-      Attribute("id_examen", AttrInt, true),
-      Attribute("nota", AttrDecimal, false)
-    ]);
+    examen := MakeTwoAttrEntity("Examen", "id_examen", AttrInt, "nota", AttrDecimal);
     AddConvertibleEntity(diagram, examen);
   }
 

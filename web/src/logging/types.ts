@@ -10,6 +10,7 @@ export type LogRecord =
   | { kind: "LogStart"; tx: TxId }
   | { kind: "LogUndoUpdate"; tx: TxId; element: ElementId; oldValue: Value }
   | { kind: "LogRedoUpdate"; tx: TxId; element: ElementId; newValue: Value }
+  | { kind: "LogUndoRedoUpdate"; tx: TxId; element: ElementId; oldValue: Value; newValue: Value }
   | { kind: "LogCommit"; tx: TxId }
   | { kind: "LogAbort"; tx: TxId }
   | { kind: "LogCheckpoint" }
@@ -52,6 +53,8 @@ export function formatLogRecord(r: LogRecord): string {
       return `<${r.tx}, ${r.element}, ${r.oldValue}>`;
     case "LogRedoUpdate":
       return `<${r.tx}, ${r.element}, ${r.newValue}>`;
+    case "LogUndoRedoUpdate":
+      return `<${r.tx}, ${r.element}, ${r.oldValue}, ${r.newValue}>`;
     case "LogCommit":
       return `<COMMIT ${r.tx}>`;
     case "LogAbort":

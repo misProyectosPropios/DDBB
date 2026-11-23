@@ -5,6 +5,14 @@
 export type RouteId =
   | "undo"
   | "redo"
+  | "undo-redo"
+  | "sched-serializability"
+  | "sched-graphs"
+  | "sched-isolation"
+  | "sched-deadlocks"
+  | "sched-concurrency"
+  | "sched-mvcc"
+  | "index-bplus"
   | "der"
   | "normalization"
   | "nosql-document"
@@ -30,18 +38,26 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "Undo Logging", route: "undo", status: "active" },
       { label: "Redo Logging", route: "redo", status: "active" },
-      { label: "Undo / Redo Logging", status: "soon" }
+      { label: "Undo / Redo Logging", route: "undo-redo", status: "active" }
     ]
   },
   {
     title: "Scheduler & Concurrency",
     items: [
-      { label: "Scheduler & Serializability", status: "soon" },
-      { label: "Dependency Graphs", status: "soon" },
-      { label: "Isolation Levels (RR, RC, CS)", status: "soon" },
-      { label: "Deadlock Visualizer", status: "soon" },
-      { label: "Optimistic & Pessimistic Control", status: "soon" },
-      { label: "MVCC Simulator", status: "soon" }
+      { label: "Scheduler & Serializability", route: "sched-serializability", status: "active" },
+      { label: "Dependency Graphs", route: "sched-graphs", status: "active" },
+      { label: "Isolation Levels (RC, CS, RR, SI)", route: "sched-isolation", status: "active" },
+      { label: "Deadlock Visualizer", route: "sched-deadlocks", status: "active" },
+      { label: "Optimistic & Pessimistic Control", route: "sched-concurrency", status: "active" },
+      { label: "MVCC Simulator", route: "sched-mvcc", status: "active" }
+    ]
+  },
+  {
+    title: "Storage & Indexing",
+    items: [
+      { label: "B+ Tree & Index Cost", route: "index-bplus", status: "active" },
+      { label: "Extendible Hashing", status: "soon" },
+      { label: "LSM-Tree (Memtable & Compaction)", status: "soon" }
     ]
   },
   {
@@ -145,7 +161,7 @@ export function renderSidebar(
   footer.className = "sidebar-footer";
   footer.innerHTML = `
     <span class="verified-pill">Verified in Dafny</span>
-    <p>Algorithms mirror the formally verified specs in <code>dafny/logging/</code> and <code>dafny/der/</code>.</p>
+    <p>Algorithms mirror the formally verified specs in <code>dafny/logging/</code>, <code>dafny/scheduler/</code>, <code>dafny/mvcc/</code>, <code>dafny/indexing/</code>, and <code>dafny/der/</code>.</p>
   `;
   aside.appendChild(footer);
 

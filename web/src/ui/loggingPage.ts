@@ -33,8 +33,10 @@ import {
 } from "../logging/types";
 import { UndoLogger } from "../logging/undoLogger";
 import { UndoRecoveryStrategy } from "../logging/undoRecovery";
+import { UndoRedoLogger } from "../logging/undoRedoLogger";
+import { UndoRedoRecoveryStrategy } from "../logging/undoRedoRecovery";
 
-export type LoggingProtocol = "undo" | "redo";
+export type LoggingProtocol = "undo" | "redo" | "undo-redo";
 
 interface DbVariable {
   name: string;
@@ -162,6 +164,7 @@ function logBadgeClass(r: LogRecord): string {
       return "badge-start";
     case "LogUndoUpdate":
     case "LogRedoUpdate":
+    case "LogUndoRedoUpdate":
       return "badge-update";
     case "LogCommit":
       return "badge-commit";
@@ -242,7 +245,9 @@ export function renderLoggingPage(
     const logger: LoggingStrategy =
       protocol === "undo"
         ? new UndoLogger(db, ckptStrategy)
-        : new RedoLogger(db, ckptStrategy);
+        : protocol === "redo"
+          ? new RedoLogger(db, ckptStrategy)
+          : new UndoRedoLogger(db, ckptStrategy);
     const schedule = new Schedule(operations);
     schedule.run(logger);
     const snapshots = logger.snapshots;
@@ -285,6 +290,42 @@ export function renderLoggingPage(
               <p>
                 Before <code>&lt;COMMIT T&gt;</code> is written and flushed, every element modified
                 by <code>T</code> must already be written to disk (<code>OUTPUT</code>).
+              </p>
+            </div>
+          </div>
+        </header>
+      `;
+    }
+
+    if (protocol === "undo-redo") {
+      return `
+        <header class="article-header">
+          <div class="breadcrumb">Logging / Undo/Redo Logging</div>
+          <h1>Undo / Redo Logging</h1>
+          <p class="article-lead">
+            Undo/Redo logging records both the <strong>old value</strong> and the
+            <strong>new value</strong> of every modified element
+            (<code>&lt;T, X, oldVal, newVal&gt;</code>), giving the buffer manager full
+            <strong>STEAL / NO-FORCE</strong> flexibility to flush dirty pages either before or
+            after <code>&lt;COMMIT T&gt;</code>.
+          </p>
+
+          <div class="callout-rules">
+            <div class="rule-card">
+              <span class="rule-pill">Rule UR1 · WAL Before OUTPUT</span>
+              <p>
+                Before any modified database element <code>X</code> is written to disk
+                (<code>OUTPUT</code>), its <code>&lt;T, X, oldVal, newVal&gt;</code> record must
+                already be flushed to disk (<code>FLUSH LOG</code>). Dirty pages may be written to
+                disk before or after <code>&lt;COMMIT T&gt;</code>.
+              </p>
+            </div>
+            <div class="rule-card">
+              <span class="rule-pill">Two-Pass Crash Recovery</span>
+              <p>
+                On crash, recovery runs <strong>Pass 1 (Forward Redo)</strong> to replay committed
+                transactions (<code>newVal</code>) and <strong>Pass 2 (Backward Undo)</strong> to
+                roll back uncommitted transactions (<code>oldVal</code>).
               </p>
             </div>
           </div>
@@ -363,6 +404,11 @@ export function renderLoggingPage(
                 class="segmented-btn${protocol === "redo" ? " is-active" : ""}"
                 data-protocol="redo"
               >Redo</button>
+              <button
+                type="button"
+                class="segmented-btn${protocol === "undo-redo" ? " is-active" : ""}"
+                data-protocol="undo-redo"
+              >Undo / Redo</button>
             </div>
           </div>
 
@@ -651,7 +697,7 @@ export function renderLoggingPage(
           <!-- Generated Log -->
           <div class="panel">
             <div class="panel-header">
-              <h2>Generated ${protocol === "undo" ? "Undo" : "Redo"} Log</h2>
+              <h2>Generated ${protocol === "undo" ? "Undo" : protocol === "redo" ? "Redo" : "Undo/Redo"} Log</h2>
               <span class="panel-meta">Flushed: ${activeSnapshot.flushedLogLen} / ${activeSnapshot.log.length}</span>
             </div>
             ${
@@ -769,7 +815,7 @@ export function renderLoggingPage(
         <!-- Execution Trace -->
         <div class="panel panel-full">
           <div class="panel-header">
-            <h2>Execution Trace (${protocol === "undo" ? "Rules U1 & U2" : "Rule R1 · WAL Before OUTPUT"})</h2>
+            <h2>Execution Trace (${protocol === "undo" ? "Rules U1 & U2" : protocol === "redo" ? "Rule R1 · WAL Before OUTPUT" : "Rule UR1 · STEAL / NO-FORCE WAL"})</h2>
             <span class="panel-meta">${activeSnapshot.trace.length} event${activeSnapshot.trace.length === 1 ? "" : "s"}</span>
           </div>
           ${
@@ -799,13 +845,13 @@ export function renderLoggingPage(
         <div class="panel panel-full panel-recovery">
           <div class="panel-header">
             <div>
-              <h2>${protocol === "undo" ? "Undo" : "Redo"} Crash Recovery Check</h2>
+              <h2>${protocol === "undo" ? "Undo" : protocol === "redo" ? "Redo" : "Undo/Redo"} Crash Recovery Check</h2>
               <p class="panel-hint">
-                Runs <code>${protocol === "undo" ? "UndoRecoveryStrategy" : "RedoRecoveryStrategy"}.RecoverFromCrash</code>
+                Runs <code>${protocol === "undo" ? "UndoRecoveryStrategy" : protocol === "redo" ? "RedoRecoveryStrategy" : "UndoRedoRecoveryStrategy"}.RecoverFromCrash</code>
                 at <strong>step ${currentStepIdx}</strong> using only the flushed log (records #1–#${activeSnapshot.flushedLogLen}).
               </p>
               ${
-                protocol === "redo"
+                protocol === "redo" || protocol === "undo-redo"
                   ? `
                 <label class="checkbox-inline">
                   <input type="checkbox" data-stale-disk ${simulateStaleDiskForRedo ? "checked" : ""} />
@@ -828,7 +874,7 @@ export function renderLoggingPage(
               ? `
             <div class="recovery-result">
               <div class="recovery-col">
-                <h3>${protocol === "undo" ? "Backward Undo Scan Actions" : "Forward Redo Replay Actions"}</h3>
+                <h3>${protocol === "undo" ? "Backward Undo Scan Actions" : protocol === "redo" ? "Forward Redo Replay Actions" : "Two-Pass Redo + Undo Recovery Actions"}</h3>
                 ${
                   crashResult.result.actions.length === 0
                     ? `<p class="panel-hint">No recovery actions needed — disk is already consistent with the flushed log.</p>`
@@ -1167,11 +1213,15 @@ export function renderLoggingPage(
       ?.addEventListener("click", () => {
         const flushedLog = activeSnapshot.log.slice(0, activeSnapshot.flushedLogLen);
         const diskBeforeCrash =
-          protocol === "redo" && simulateStaleDiskForRedo
+          (protocol === "redo" || protocol === "undo-redo") && simulateStaleDiskForRedo
             ? buildInitialDb()
             : { ...activeSnapshot.disk };
         const recovery: RecoveryStrategy =
-          protocol === "undo" ? new UndoRecoveryStrategy() : new RedoRecoveryStrategy();
+          protocol === "undo"
+            ? new UndoRecoveryStrategy()
+            : protocol === "redo"
+              ? new RedoRecoveryStrategy()
+              : new UndoRedoRecoveryStrategy();
         const result = recovery.recoverFromCrash(diskBeforeCrash, flushedLog);
         crashResult = {
           stepIndex: activeSnapshot.stepIndex,

@@ -2024,3 +2024,18 @@ code {
   padding: 0.32rem 0.55rem;
   font-size: 0.8rem;
 }
+
+/* Scheduler, Precedence Graph & Wait-For Graph Styles */
+.sched-graph-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 270px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.row-error {
+  background: var(--rose-soft);
+}

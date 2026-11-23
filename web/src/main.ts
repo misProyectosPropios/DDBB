@@ -1,4 +1,5 @@
 import "./styles.css";
+import { renderDerPage } from "./ui/derPage";
 import { renderLoggingPage, type LoggingProtocol } from "./ui/loggingPage";
 import { renderOverviewPage } from "./ui/overviewPage";
 import { renderSidebar, type RouteId } from "./ui/sidebar";
@@ -7,6 +8,8 @@ function routeFromHash(): RouteId {
   const hash = window.location.hash.replace(/^#\/?/, "");
   if (hash === "overview") return "overview";
   if (hash === "logging/redo") return "redo";
+  if (hash === "der") return "der";
+  if (hash === "normalization") return "normalization";
   return "undo";
 }
 
@@ -18,7 +21,11 @@ function setHash(route: RouteId): void {
       ? "#/overview"
       : route === "redo"
         ? "#/logging/redo"
-        : "#/logging/undo";
+        : route === "der"
+          ? "#/der"
+          : route === "normalization"
+            ? "#/normalization"
+            : "#/logging/undo";
   if (window.location.hash !== target) {
     window.location.hash = target;
   }
@@ -74,7 +81,11 @@ function renderApp(): void {
   main.appendChild(
     route === "overview"
       ? renderOverviewPage(navigate)
-      : renderLoggingPage(route, handleProtocolSwitch)
+      : route === "der"
+        ? renderDerPage("der")
+        : route === "normalization"
+          ? renderDerPage("normalization")
+          : renderLoggingPage(route, handleProtocolSwitch)
   );
 
   root.appendChild(mobileBar);

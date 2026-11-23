@@ -2,7 +2,7 @@
 // Lists all planned DDBB curriculum sections as titles; Undo Logging and Redo
 // Logging (with Quiescent & Non-Quiescent checkpointing) are active pages.
 
-export type RouteId = "undo" | "redo" | "overview";
+export type RouteId = "undo" | "redo" | "der" | "normalization" | "overview";
 
 interface NavItem {
   label: string;
@@ -38,9 +38,9 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     title: "SQL Design & Internals",
     items: [
-      { label: "DER to Generic SQL", status: "soon" },
+      { label: "DER to Generic SQL", route: "der", status: "active" },
       { label: "Triggers & Stored Procedures", status: "soon" },
-      { label: "Normalization", status: "soon" }
+      { label: "Normalization (1NF–BCNF)", route: "normalization", status: "active" }
     ]
   },
   {
@@ -135,7 +135,7 @@ export function renderSidebar(
   footer.className = "sidebar-footer";
   footer.innerHTML = `
     <span class="verified-pill">Verified in Dafny</span>
-    <p>Algorithms mirror the formally verified specs in <code>dafny/logging/</code>.</p>
+    <p>Algorithms mirror the formally verified specs in <code>dafny/logging/</code> and <code>dafny/der/</code>.</p>
   `;
   aside.appendChild(footer);
 

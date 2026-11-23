@@ -50,6 +50,32 @@ export function renderOverviewPage(onNavigate: (route: RouteId) => void): HTMLEl
             Open Redo Logging →
           </button>
         </div>
+
+        <div class="topic-card topic-card-ready">
+          <div class="topic-card-eyebrow">SQL Design · Available Now</div>
+          <h3>DER Editor → Relational Model &amp; SQL</h3>
+          <p>
+            Interactive canvas for Entities, 1:1 / 1:N / N:M / General (min..max) Relations, and
+            Aggregations with straight lines &amp; editable corners, persistent storage, and
+            verified DER → RM + Generic SQL conversion.
+          </p>
+          <button type="button" class="btn btn-primary" data-open-der>
+            Open DER Editor →
+          </button>
+        </div>
+
+        <div class="topic-card topic-card-ready">
+          <div class="topic-card-eyebrow">SQL Design · Available Now</div>
+          <h3>Normalization (1NF, 2NF, 3NF, BCNF)</h3>
+          <p>
+            Validates and converts schemas to 1NF, 2NF, 3NF (Bernstein synthesis), and BCNF, and
+            verifies <strong>Lossless-Join (Chase Tableau)</strong> and
+            <strong>Dependency Preservation (Ullman)</strong>.
+          </p>
+          <button type="button" class="btn btn-primary" data-open-norm>
+            Open Normalization →
+          </button>
+        </div>
       </div>
     </section>
   `;
@@ -59,6 +85,12 @@ export function renderOverviewPage(onNavigate: (route: RouteId) => void): HTMLEl
   });
   article.querySelector<HTMLButtonElement>("[data-open-redo]")?.addEventListener("click", () => {
     onNavigate("redo");
+  });
+  article.querySelector<HTMLButtonElement>("[data-open-der]")?.addEventListener("click", () => {
+    onNavigate("der");
+  });
+  article.querySelector<HTMLButtonElement>("[data-open-norm]")?.addEventListener("click", () => {
+    onNavigate("normalization");
   });
 
   return article;

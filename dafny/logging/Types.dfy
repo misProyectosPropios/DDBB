@@ -8,12 +8,13 @@ module LoggingTypes {
   type Value = int
   type DatabaseState = map<ElementId, Value>
 
-  // Log records for Undo and Redo logging, including quiescent (<CKPT>) and
-  // non-quiescent (<START CKPT(...)>, <END CKPT>) checkpointing.
+  // Log records for Undo, Redo, and Undo/Redo logging, including quiescent
+  // (<CKPT>) and non-quiescent (<START CKPT(...)>, <END CKPT>) checkpointing.
   datatype LogRecord =
     | LogStart(tx: TxId)
     | LogUndoUpdate(tx: TxId, element: ElementId, oldValue: Value)
     | LogRedoUpdate(tx: TxId, element: ElementId, newValue: Value)
+    | LogUndoRedoUpdate(tx: TxId, element: ElementId, oldValue: Value, newValue: Value)
     | LogCommit(tx: TxId)
     | LogAbort(tx: TxId)
     | LogCheckpoint
@@ -22,7 +23,7 @@ module LoggingTypes {
 
   predicate IsTxRecord(r: LogRecord)
   {
-    r.LogStart? || r.LogUndoUpdate? || r.LogRedoUpdate? || r.LogCommit? || r.LogAbort?
+    r.LogStart? || r.LogUndoUpdate? || r.LogRedoUpdate? || r.LogUndoRedoUpdate? || r.LogCommit? || r.LogAbort?
   }
 
   predicate IsCheckpointRecord(r: LogRecord)
@@ -174,6 +175,46 @@ module LoggingTypes {
       var tx := t[i].record.tx;
       forall j :: 0 <= j < i && t[j].EventWriteBuffer? && t[j].tx == tx ==>
         exists o :: j < o < i && t[o].EventOutput? && t[o].element == t[j].element
+  }
+
+  // ---------------------------------------------------------------------------
+  // Formal Undo/Redo Logging specification predicates (Garcia-Molina Rule UR1)
+  // ---------------------------------------------------------------------------
+
+  // Every in-memory write is immediately preceded by its Undo/Redo update
+  // record <T, X, oldVal, newVal>.
+  ghost predicate WriteHasUndoRedoLogBefore(t: seq<TraceEvent>)
+  {
+    forall j :: 0 <= j < |t| && t[j].EventWriteBuffer? ==>
+      j > 0 && t[j - 1] == EventLog(LogUndoRedoUpdate(t[j].tx, t[j].element, t[j].oldVal, t[j].newVal))
+  }
+
+  // Undo/Redo Logging Rule UR1 (Write-Ahead Logging):
+  // Before any modified database element X is written to disk (OUTPUT), the
+  // log records emitted prior to that OUTPUT (including <T, X, oldVal, newVal>)
+  // must already be flushed to disk. Dirty blocks may be flushed either before
+  // or after <COMMIT T> (STEAL / NO-FORCE policy).
+  ghost predicate RuleUR1_FlushBeforeOutput(t: seq<TraceEvent>)
+  {
+    RuleU1_FlushBeforeOutput(t)
+  }
+
+  lemma LemmaAppendNonWritePreservesUndoRedoTrace(t: seq<TraceEvent>, e: TraceEvent)
+    requires !e.EventWriteBuffer?
+    requires WriteHasUndoRedoLogBefore(t)
+    requires RuleU1_FlushBeforeOutput(t)
+    requires e.EventOutput? ==> LastFlushedCount(t) == |ExtractLog(t)|
+    ensures var t' := t + [e];
+      t <= t' &&
+      t'[..|t|] == t &&
+      ExtractLog(t') == (if e.EventLog? then ExtractLog(t) + [e.record] else ExtractLog(t)) &&
+      LastFlushedCount(t') == (if e.EventFlushLog? then e.flushedCount else LastFlushedCount(t)) &&
+      WriteHasUndoRedoLogBefore(t') &&
+      RuleU1_FlushBeforeOutput(t')
+  {
+    var t' := t + [e];
+    assert t'[..|t|] == t;
+    LemmaAppendPreservesRuleU1(t, e);
   }
 
   // ---------------------------------------------------------------------------
@@ -502,6 +543,8 @@ module LoggingTypes {
       "<" + tx + ", " + elem + ", " + IntToString(oldVal) + ">"
     case LogRedoUpdate(tx, elem, newVal) =>
       "<" + tx + ", " + elem + ", " + IntToString(newVal) + ">"
+    case LogUndoRedoUpdate(tx, elem, oldVal, newVal) =>
+      "<" + tx + ", " + elem + ", " + IntToString(oldVal) + ", " + IntToString(newVal) + ">"
     case LogCommit(tx) =>
       "<COMMIT " + tx + ">"
     case LogAbort(tx) =>

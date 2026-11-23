@@ -1,5 +1,6 @@
-// Runnable demonstrations and verified test cases for Undo & Redo Logging
-// composed with NoCheckpoint, Quiescent, and Non-Quiescent checkpoint strategies.
+// Runnable demonstrations and verified test cases for Undo, Redo, and Undo/Redo
+// Logging composed with NoCheckpoint, Quiescent, and Non-Quiescent checkpoint
+// strategies.
 
 include "Types.dfy"
 include "Checkpointing.dfy"
@@ -8,6 +9,8 @@ include "UndoLogger.dfy"
 include "UndoRecovery.dfy"
 include "RedoLogger.dfy"
 include "RedoRecovery.dfy"
+include "UndoRedoLogger.dfy"
+include "UndoRedoRecovery.dfy"
 
 module Main {
   import opened LoggingTypes
@@ -17,6 +20,8 @@ module Main {
   import UndoRecovery
   import opened RedoLogging
   import RedoRecovery
+  import opened UndoRedoLogging
+  import UndoRedoRecovery
 
   // ---------------------------------------------------------------------------
   // Statically verified unit tests (proved by Dafny at compile/verify time)
@@ -91,6 +96,44 @@ module Main {
       LogStart("T1"),
       LogRedoUpdate("T1", "A", 16),
       LogRedoUpdate("T1", "B", 16),
+      LogCommit("T1")
+    ];
+    assert logger.flushedLogLen == 4;
+    assert logger.errors == [];
+    assert "T1" in logger.committedTxs;
+  }
+
+  // Classic Garcia-Molina example (Undo/Redo, no checkpoints): T1 doubles A and B.
+  method TestSingleTransactionUndoRedoVerified()
+  {
+    var initialDb: DatabaseState := map["A" := 8, "B" := 8];
+    var ckpt := new NoCheckpointStrategy();
+    var logger := new UndoRedoLogger(initialDb, ckpt);
+
+    assert "T1" !in (logger.activeTxs + logger.committedTxs + logger.abortedTxs);
+    logger.VisitStart("T1");
+    assert logger.log == [LogStart("T1")];
+
+    logger.VisitRead("T1", "A");
+    assert logger.log == [LogStart("T1")];
+
+    logger.VisitWrite("T1", "A", 16);
+    assert logger.log == [LogStart("T1"), LogUndoRedoUpdate("T1", "A", 8, 16)];
+    assert logger.buffer["A"] == 16 && logger.disk["A"] == 8;
+
+    logger.VisitRead("T1", "B");
+    logger.VisitWrite("T1", "B", 16);
+    assert logger.log == [
+      LogStart("T1"),
+      LogUndoRedoUpdate("T1", "A", 8, 16),
+      LogUndoRedoUpdate("T1", "B", 8, 16)
+    ];
+
+    logger.VisitCommit("T1");
+    assert logger.log == [
+      LogStart("T1"),
+      LogUndoRedoUpdate("T1", "A", 8, 16),
+      LogUndoRedoUpdate("T1", "B", 8, 16),
       LogCommit("T1")
     ];
     assert logger.flushedLogLen == 4;
@@ -230,7 +273,44 @@ module Main {
     print "--- Trace ---\n", FormatTrace(generatedTrace), "\n\n";
   }
 
-  // Crash recovery with checkpoints (Undo & Redo).
+  // Non-Quiescent Undo/Redo: CheckpointOp flushes WAL, writes dirty buffer X=12
+  // to disk (STEAL before T1 commits!), and emits <START CKPT(T1)> + <END CKPT>.
+  method DemoNonQuiescentUndoRedo()
+  {
+    var initialDb: DatabaseState := map["X" := 5, "Y" := 10];
+    var ops: seq<Operation> := [
+      StartOp("T1"),
+      WriteOp("T1", "X", 12),
+      CheckpointOp,           // Flushes WAL, outputs dirty X=12 to disk, emits <START CKPT(T1)> + <END CKPT>
+      StartOp("T2"),
+      WriteOp("T2", "Y", 25),
+      CommitOp("T1"),
+      CommitOp("T2")
+    ];
+    var schedule := Schedule(ops);
+    var nonQuiescent := new NonQuiescentCheckpointStrategy();
+    var logger := new UndoRedoLogger(initialDb, nonQuiescent);
+
+    var generatedLog, generatedTrace, errs := RunWithAnyStrategy(schedule, logger);
+
+    expect errs == [];
+    expect generatedLog == [
+      LogStart("T1"),
+      LogUndoRedoUpdate("T1", "X", 5, 12),
+      LogStartCheckpoint(["T1"]),
+      LogEndCheckpoint,
+      LogStart("T2"),
+      LogUndoRedoUpdate("T2", "Y", 10, 25),
+      LogCommit("T1"),
+      LogCommit("T2")
+    ];
+
+    print "=== Demo 4: Non-Quiescent Undo/Redo Checkpointing ===\n";
+    print "--- Undo/Redo Log ---\n", FormatLog(generatedLog), "\n";
+    print "--- Trace ---\n", FormatTrace(generatedTrace), "\n\n";
+  }
+
+  // Crash recovery with checkpoints (Undo, Redo, and Undo/Redo).
   method DemoRecoveryWithCheckpoints()
   {
     var initialDb: DatabaseState := map["A" := 10, "B" := 20];
@@ -267,18 +347,32 @@ module Main {
     expect "A" in rDisk && rDisk["A"] == 50;
     expect "B" in rDisk && rDisk["B"] == 20;
 
-    print "=== Demo 4: Crash Recovery with Quiescent <CKPT> ===\n";
-    print "Undo recovered: A=", uDisk["A"], ", B=", uDisk["B"], " (aborts: ", |uAborts|, ")\n";
-    print "Redo recovered: A=", rDisk["A"], ", B=", rDisk["B"], " (aborts: ", |rAborts|, ")\n\n";
+    // Undo/Redo crash recovery runs forward Redo of committed T1 and backward Undo of uncommitted T2
+    var urCkpt := new QuiescentCheckpointStrategy();
+    var urLogger := new UndoRedoLogger(initialDb, urCkpt);
+    var _, _, urErrs := schedule.Run(urLogger);
+    expect urErrs == [];
+    var urFlushed := urLogger.GetFlushedLog();
+    var urRec: RecoveryStrategy := new UndoRedoRecovery.UndoRedoRecoveryStrategy();
+    var urDisk, urAborts := urRec.RecoverFromCrash(urLogger.GetDisk(), urFlushed);
+    expect "A" in urDisk && urDisk["A"] == 50;
+    expect "B" in urDisk && urDisk["B"] == 20;
+
+    print "=== Demo 5: Crash Recovery with Quiescent <CKPT> ===\n";
+    print "Undo recovered:      A=", uDisk["A"], ", B=", uDisk["B"], " (aborts: ", |uAborts|, ")\n";
+    print "Redo recovered:      A=", rDisk["A"], ", B=", rDisk["B"], " (aborts: ", |rAborts|, ")\n";
+    print "Undo/Redo recovered: A=", urDisk["A"], ", B=", urDisk["B"], " (aborts: ", |urAborts|, ")\n\n";
   }
 
   method Main()
   {
     TestSingleTransactionUndoVerified();
     TestSingleTransactionRedoVerified();
+    TestSingleTransactionUndoRedoVerified();
     DemoQuiescentUndo();
     DemoNonQuiescentUndo();
     DemoNonQuiescentRedo();
+    DemoNonQuiescentUndoRedo();
     DemoRecoveryWithCheckpoints();
   }
 }

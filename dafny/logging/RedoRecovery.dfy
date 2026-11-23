@@ -193,6 +193,9 @@ module RedoRecovery {
           case LogUndoUpdate(_, _, _) => {
             // Redo recovery ignores Undo update records.
           }
+          case LogUndoRedoUpdate(_, _, _, _) => {
+            // Handled by UndoRedoRecoveryStrategy.
+          }
           case LogCommit(_) => {
             // Committed transactions were collected up front in `committed`.
           }

@@ -1,0 +1,5 @@
+# Dafny 4 project configuration for the Storage & Indexing Internals module.
+# Covers B+ Trees, Extendible Hashing, and LSM-Trees.
+
+[options]
+warn-shadowing = true

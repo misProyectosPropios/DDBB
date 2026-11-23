@@ -105,6 +105,9 @@ module UndoRecovery {
           case LogRedoUpdate(_, _, _) => {
             // Undo recovery ignores Redo update records.
           }
+          case LogUndoRedoUpdate(_, _, _, _) => {
+            // Handled by UndoRedoRecoveryStrategy.
+          }
           case LogCommit(_) => {
             // Already committed; Rule U2 guarantees its writes are on disk.
           }

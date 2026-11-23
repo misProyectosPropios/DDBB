@@ -11,6 +11,8 @@ include "Types.dfy"
 include "Model.dfy"
 include "RelationalModel.dfy"
 include "DerToRelational.dfy"
+include "DidModel.dfy"
+include "DerToDid.dfy"
 include "FunctionalDeps.dfy"
 include "DecompositionAnalysis.dfy"
 include "Normalization.dfy"
@@ -101,8 +103,126 @@ module DerTests {
     AddConvertibleEntity(diagram, examen);
   }
 
-  // Step 2: Links 1:1, 1:N, N:M, General relations and an Aggregation while
-  // keeping `ConvertibleDiagram` completely opaque.
+  // Step 2a: Links the 1:1 (`Tiene`) and 1:N (`Emplea`) relations.
+  method LinkOneToOneAndOneToMany(
+    diagram: DerDiagram,
+    persona: Entity,
+    pasaporte: Entity,
+    departamento: Entity,
+    empleado: Entity
+  )
+    requires ConvertibleDiagram(diagram)
+    requires persona in diagram.elements && pasaporte in diagram.elements
+    requires departamento in diagram.elements && empleado in diagram.elements
+    requires persona != departamento
+    requires persona.relations == [] && departamento.relations == []
+    modifies persona, departamento
+    ensures ConvertibleDiagram(diagram)
+    ensures |persona.relations| == 1
+    ensures |departamento.relations| == 1
+    ensures departamento.relations[0].name == "Emplea"
+  {
+    var relTiene := new OneToOneRelation(
+      "Tiene", pasaporte, CardOne(), CardZeroOrOne(), []
+    );
+    assert relTiene.Kind() == KindOneToOne;
+    LinkConvertibleRelation(diagram, persona, relTiene);
+
+    var relEmplea := new OneToManyRelation(
+      "Emplea", empleado, CardOne(), CardOneOrMany(), [
+      Attribute("fecha_ingreso", AttrDate, false)
+      ]
+    );
+    assert relEmplea.Kind() == KindOneToMany;
+    LinkConvertibleRelation(diagram, departamento, relEmplea);
+  }
+
+  // Step 2b: Links the N:M (`Cursa`) and General (`Colabora`, 2..5 -> 1..*) relations.
+  method LinkManyToManyAndGeneral(
+    diagram: DerDiagram,
+    departamento: Entity,
+    alumno: Entity,
+    materia: Entity
+  ) returns (relCursa: Relation)
+    requires ConvertibleDiagram(diagram)
+    requires departamento in diagram.elements
+    requires alumno in diagram.elements && materia in diagram.elements
+    requires alumno != departamento
+    requires alumno.relations == []
+    requires |departamento.relations| == 1 && departamento.relations[0].name == "Emplea"
+    modifies alumno, departamento
+    ensures ConvertibleDiagram(diagram)
+    ensures |departamento.relations| == 2
+    ensures relCursa.ValidRelation()
+    ensures relCursa.target == materia
+    ensures relCursa as object != diagram as object
+    ensures forall i :: 0 <= i < |diagram.elements| ==>
+                          diagram.elements[i] as object != relCursa as object
+  {
+    var cursa := new ManyToManyRelation(
+      "Cursa", materia, CardZeroOrMany(), CardOneOrMany(), [
+      Attribute("cuatrimestre", AttrString, false)
+      ]
+    );
+    assert cursa.Kind() == KindManyToMany;
+    LinkConvertibleRelation(diagram, alumno, cursa);
+    relCursa := cursa;
+
+    var relColabora := new GeneralRelation(
+      "Colabora", departamento, CardRange(2, 5), CardAtLeast(1), []
+    );
+    assert relColabora.Kind() == KindManyToMany;
+    assert DistinctRelations(departamento.relations[0], relColabora);
+    LinkConvertibleRelation(diagram, departamento, relColabora);
+  }
+
+  // Step 2c: Adds the `Cursada` Aggregation and links its outer 1:N relation `EvaluadaPor`.
+  method AddCursadaAggregation(
+    diagram: DerDiagram,
+    alumno: Entity,
+    materia: Entity,
+    examen: Entity,
+    relCursa: Relation
+  ) returns (cursada: Aggregation)
+    requires ConvertibleDiagram(diagram)
+    requires |diagram.elements| == 7
+    requires diagram.elements[0].name == "Persona"
+    requires diagram.elements[1].name == "Pasaporte"
+    requires diagram.elements[2].name == "Departamento"
+    requires diagram.elements[3].name == "Empleado"
+    requires diagram.elements[4].name == "Alumno"
+    requires diagram.elements[5].name == "Materia"
+    requires diagram.elements[6].name == "Examen"
+    requires alumno in diagram.elements && materia in diagram.elements && examen in diagram.elements
+    requires relCursa.ValidRelation() && relCursa.target == materia
+    requires relCursa as object != diagram as object
+    requires forall i :: 0 <= i < |diagram.elements| ==>
+                           diagram.elements[i] as object != relCursa as object
+    modifies diagram
+    ensures ConvertibleDiagram(diagram)
+    ensures |diagram.elements| == 8
+    ensures diagram.elements[..7] == old(diagram.elements)
+    ensures diagram.elements[7] == cursada
+    ensures cursada.name == "Cursada"
+    ensures |cursada.relations| == 1
+    ensures cursada.innerRelation == relCursa
+    ensures cursada.innerSource == alumno
+    ensures fresh(cursada)
+  {
+    cursada := new Aggregation("Cursada", alumno, relCursa, [
+                               Attribute("estado", AttrString, false)
+                               ]);
+    AddConvertibleAggregation(diagram, cursada);
+
+    var relEvaluadaPor := new OneToManyRelation(
+      "EvaluadaPor", examen, CardOne(), CardZeroOrMany(), [
+      Attribute("instancia", AttrString, false)
+      ]
+    );
+    LinkConvertibleRelation(diagram, cursada, relEvaluadaPor);
+  }
+
+  // Step 2: Assembles the complete sample DER diagram in 4 modular steps.
   method BuildSampleDiagram() returns (diagram: DerDiagram)
     ensures ConvertibleDiagram(diagram)
     ensures |diagram.elements| == 8
@@ -118,56 +238,10 @@ module DerTests {
     var d, persona, pasaporte, departamento, empleado, alumno, materia, examen := BuildBaseEntities();
     diagram := d;
 
-    // 2. 1:1 Relation: Persona (1..1) --[Tiene]--> Pasaporte (0..1)
-    var relTiene := new OneToOneRelation(
-      "Tiene", pasaporte, CardOne(), CardZeroOrOne(), []
-    );
-    assert relTiene.Kind() == KindOneToOne;
-    LinkConvertibleRelation(diagram, persona, relTiene);
-    assert |persona.relations| == 1;
-
-    // 3. 1:N Relation: Departamento (1..1) --[Emplea]--> Empleado (1..*)
-    var relEmplea := new OneToManyRelation(
-      "Emplea", empleado, CardOne(), CardOneOrMany(), [
-        Attribute("fecha_ingreso", AttrDate, false)
-      ]
-    );
-    assert relEmplea.Kind() == KindOneToMany;
-    LinkConvertibleRelation(diagram, departamento, relEmplea);
-
-    // 4. N:M Relation: Alumno (0..*) --[Cursa]--> Materia (1..*)
-    var relCursa := new ManyToManyRelation(
-      "Cursa", materia, CardZeroOrMany(), CardOneOrMany(), [
-        Attribute("cuatrimestre", AttrString, false)
-      ]
-    );
-    assert relCursa.Kind() == KindManyToMany;
-    LinkConvertibleRelation(diagram, alumno, relCursa);
-
-    // 5. General Relation with custom finite bounds: Departamento (2..5) --[Colabora]--> Departamento (1..*)
-    var relColabora := new GeneralRelation(
-      "Colabora", departamento, CardRange(2, 5), CardAtLeast(1), []
-    );
-    assert relColabora.Kind() == KindManyToMany;
-    LinkConvertibleRelation(diagram, departamento, relColabora);
-    assert |departamento.relations| == 2;
-
-    // 6. Aggregation: `Cursada` composes `(Alumno) --[Cursa]--> (Materia)` so
-    //    it can participate in a 1:N relation `EvaluadaPor` with `Examen`!
-    var cursada := new Aggregation("Cursada", alumno, relCursa, [
-      Attribute("estado", AttrString, false)
-    ]);
-    AddConvertibleAggregation(diagram, cursada);
-
-    var relEvaluadaPor := new OneToManyRelation(
-      "EvaluadaPor", examen, CardOne(), CardZeroOrMany(), [
-        Attribute("instancia", AttrString, false)
-      ]
-    );
-    LinkConvertibleRelation(diagram, cursada, relEvaluadaPor);
-    assert |cursada.relations| == 1;
-    assert cursada.innerRelation == relCursa;
-    assert cursada.innerSource == alumno;
+    LinkOneToOneAndOneToMany(diagram, persona, pasaporte, departamento, empleado);
+    var relCursa := LinkManyToManyAndGeneral(diagram, departamento, alumno, materia);
+    var cursada := AddCursadaAggregation(diagram, alumno, materia, examen, relCursa);
+    assert cursada.name == "Cursada";
   }
 
   // Converts the verified DER diagram to the Relational Model with
@@ -223,6 +297,46 @@ module DerTests {
   }
 }
 
+// Isolated module for verifying DER -> DID conversion & Mongo-style XML generation.
+module DidTests {
+  import opened DerTypes
+  import opened DerModel
+  import opened DerToRelational
+  import opened DidModel
+  import opened DerToDid
+  import DerTests
+
+  method TestDerToDidVerified()
+  {
+    var diagram := DerTests.BuildSampleDiagram();
+
+    // 1. Default DID conversion (1:1 & 1:N embedded, N:M referenced)
+    var defaultCfg := DefaultDidConfig("UniversityHR_NoSQL");
+    var didDefault, xmlDefault := ConvertDerToDidXml(diagram, defaultCfg);
+    assert ValidDidDatabase(didDefault);
+    //assert HasCollection(didDefault, "Persona");
+    //assert HasCollection(didDefault, "Departamento");
+    //assert HasCollection(didDefault, "Cursada");
+    assert |xmlDefault| > 0;
+
+    print "\n=== Default DID (Mongo-Style Document XML) ===\n";
+    print xmlDefault;
+
+    // 2. Modified DID conversion: override 'Tiene' to Reference and 'Cursa' to Embed,
+    //    and filter top-level root collections to Persona, Departamento, and Cursada.
+    var customCfg0 := WithRelationMode(defaultCfg, "Tiene", ModeReference);
+    var customCfg1 := WithRelationMode(customCfg0, "Cursa", ModeEmbed);
+    var customCfg := WithRootCollections(customCfg1, ["Persona", "Departamento", "Cursada"]);
+
+    var didCustom, xmlCustom := ConvertDerToDidXml(diagram, customCfg);
+    assert ValidDidDatabase(didCustom);
+    assert |xmlCustom| > 0;
+
+    print "\n=== Modified DID (Custom Root Collections & Embed/Reference Overrides) ===\n";
+    print xmlCustom;
+  }
+}
+
 module Main {
   import opened DerTypes
   import opened RelationalModel
@@ -230,6 +344,7 @@ module Main {
   import opened DecompositionAnalysis
   import opened Normalization
   import DerTests
+  import DidTests
 
   method ValidateAndPrintRM(rm: RelationalSchema)
     requires ValidRelationalSchema(rm)
@@ -368,6 +483,7 @@ module Main {
   {
     var rm := DerTests.TestDerModelVerified();
     ValidateAndPrintRM(rm);
+    DidTests.TestDerToDidVerified();
     Test1NFConversion();
     Test2NFAnd3NFConversion();
     TestBCNFAndLossyAnalysis();

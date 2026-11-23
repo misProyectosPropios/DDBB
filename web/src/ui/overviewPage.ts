@@ -76,6 +76,20 @@ export function renderOverviewPage(onNavigate: (route: RouteId) => void): HTMLEl
             Open Normalization →
           </button>
         </div>
+
+        <div class="topic-card topic-card-ready">
+          <div class="topic-card-eyebrow">NoSQL · Available Now</div>
+          <h3>NoSQL Models (Document, Graph, Column, Key-Value)</h3>
+          <p>
+            Reuses the DER editor to design <strong>Document (DID)</strong>,
+            <strong>Graph</strong>, <strong>Column-Family</strong>, and
+            <strong>Key-Value</strong> schemas with <strong>Partial or Complete Incrustations</strong>
+            and <strong>Table Deletion / Weak Entity Absorption</strong>.
+          </p>
+          <button type="button" class="btn btn-primary" data-open-did>
+            Open NoSQL Workbench →
+          </button>
+        </div>
       </div>
     </section>
   `;
@@ -91,6 +105,9 @@ export function renderOverviewPage(onNavigate: (route: RouteId) => void): HTMLEl
   });
   article.querySelector<HTMLButtonElement>("[data-open-norm]")?.addEventListener("click", () => {
     onNavigate("normalization");
+  });
+  article.querySelector<HTMLButtonElement>("[data-open-did]")?.addEventListener("click", () => {
+    onNavigate("nosql-document");
   });
 
   return article;

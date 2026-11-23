@@ -10,6 +10,10 @@ function routeFromHash(): RouteId {
   if (hash === "logging/redo") return "redo";
   if (hash === "der") return "der";
   if (hash === "normalization") return "normalization";
+  if (hash === "did" || hash === "nosql/document") return "nosql-document";
+  if (hash === "nosql/graph") return "nosql-graph";
+  if (hash === "nosql/column") return "nosql-column";
+  if (hash === "nosql/key-value") return "nosql-keyvalue";
   return "undo";
 }
 
@@ -25,7 +29,15 @@ function setHash(route: RouteId): void {
           ? "#/der"
           : route === "normalization"
             ? "#/normalization"
-            : "#/logging/undo";
+            : route === "nosql-document"
+              ? "#/nosql/document"
+              : route === "nosql-graph"
+                ? "#/nosql/graph"
+                : route === "nosql-column"
+                  ? "#/nosql/column"
+                  : route === "nosql-keyvalue"
+                    ? "#/nosql/key-value"
+                    : "#/logging/undo";
   if (window.location.hash !== target) {
     window.location.hash = target;
   }
@@ -85,7 +97,12 @@ function renderApp(): void {
         ? renderDerPage("der")
         : route === "normalization"
           ? renderDerPage("normalization")
-          : renderLoggingPage(route, handleProtocolSwitch)
+          : route === "nosql-document" ||
+              route === "nosql-graph" ||
+              route === "nosql-column" ||
+              route === "nosql-keyvalue"
+            ? renderDerPage(route)
+            : renderLoggingPage(route, handleProtocolSwitch)
   );
 
   root.appendChild(mobileBar);

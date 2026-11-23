@@ -57,6 +57,7 @@ export interface DerEntity {
   id: string;
   kind: "entity";
   name: string;
+  isWeak?: boolean; // Weak entity (double-rectangle on DER; candidate for complete incrustation & table deletion)
   attributes: Attribute[];
   position: Point;
 }

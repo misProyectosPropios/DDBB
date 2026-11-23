@@ -1806,3 +1806,221 @@ code {
   flex-direction: column;
   gap: 0.65rem;
 }
+
+/* DID (Document Instance Diagram) & Mongo XML Styles */
+.did-rel-mode-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.did-rel-mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.82rem;
+}
+
+.did-collections-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.did-doc-tree {
+  font-size: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.did-id-line {
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  padding: 0.25rem 0.5rem;
+}
+
+.did-fields-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding-left: 0.5rem;
+  border-left: 2px solid var(--border-strong);
+}
+
+.did-tree-item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.18rem 0.35rem;
+  border-radius: 5px;
+  background: var(--bg-subtle);
+}
+
+.did-tree-item.is-ref {
+  background: var(--amber-soft);
+  border: 1px solid #fde68a;
+}
+
+.did-field-tag {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 0.08rem 0.38rem;
+  border-radius: 4px;
+  background: #ffffff;
+  color: var(--ink-secondary);
+  border: 1px solid var(--border);
+}
+
+.did-field-tag.is-array {
+  color: var(--violet);
+  border-color: #ddd6fe;
+  background: var(--violet-soft);
+}
+
+.did-field-tag.is-ref-tag {
+  color: var(--amber);
+  border-color: #fde68a;
+  background: #ffffff;
+}
+
+.did-field-tag.is-embed-tag {
+  color: var(--green);
+  border-color: #a7f3d0;
+  background: var(--green-soft);
+}
+
+.did-embedded-box {
+  border: 1px solid #a7f3d0;
+  background: #f0fdf4;
+  border-radius: 7px;
+  padding: 0.45rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.did-embedded-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+}
+
+.nosql-model-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin-bottom: 0.9rem;
+}
+
+.nosql-tab-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  background: var(--bg-page);
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  padding: 0.6rem 0.8rem;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.nosql-tab-btn:hover {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.nosql-tab-btn.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.12);
+}
+
+.nosql-tab-title {
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.nosql-tab-btn.is-active .nosql-tab-title {
+  color: var(--accent);
+}
+
+.nosql-tab-sub {
+  font-size: 0.72rem;
+  color: var(--ink-secondary);
+}
+
+.did-rel-card {
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.did-rel-card .did-rel-mode-row {
+  border: none;
+  padding: 0;
+}
+
+.did-partial-picker {
+  background: var(--bg-subtle);
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  padding: 0.45rem 0.55rem;
+}
+
+.did-delete-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--border);
+}
+
+.did-tree-item.is-partial-inc {
+  background: var(--violet-soft);
+  border: 1px solid #ddd6fe;
+}
+
+.did-field-tag.is-partial-tag {
+  color: var(--violet);
+  border-color: #ddd6fe;
+  background: #ffffff;
+}
+
+.did-entity-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.did-entity-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.32rem 0.55rem;
+  font-size: 0.8rem;
+}

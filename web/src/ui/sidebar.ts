@@ -2,7 +2,16 @@
 // Lists all planned DDBB curriculum sections as titles; Undo Logging and Redo
 // Logging (with Quiescent & Non-Quiescent checkpointing) are active pages.
 
-export type RouteId = "undo" | "redo" | "der" | "normalization" | "overview";
+export type RouteId =
+  | "undo"
+  | "redo"
+  | "der"
+  | "normalization"
+  | "nosql-document"
+  | "nosql-graph"
+  | "nosql-column"
+  | "nosql-keyvalue"
+  | "overview";
 
 interface NavItem {
   label: string;
@@ -46,9 +55,10 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     title: "NoSQL",
     items: [
-      { label: "DID", status: "soon" },
-      { label: "DER to Column-Family", status: "soon" },
-      { label: "DER to Workflow & Entities", status: "soon" }
+      { label: "Document (DID & Mongo XML)", route: "nosql-document", status: "active" },
+      { label: "Graph (Property Graph)", route: "nosql-graph", status: "active" },
+      { label: "Column (Wide-Column)", route: "nosql-column", status: "active" },
+      { label: "Key-Value (Keyspace)", route: "nosql-keyvalue", status: "active" }
     ]
   }
 ];

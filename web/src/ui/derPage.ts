@@ -28,6 +28,23 @@ import {
   saveDiagramsToStorage
 } from "../der/derToRelational";
 import {
+  convertDerToColumnModel,
+  convertDerToDid,
+  convertDerToGraphModel,
+  convertDerToKeyValueModel,
+  defaultDidConfig,
+  effectiveIncrustation,
+  formatDidDatabaseXml,
+  formatDidMongoJson,
+  getRelationRule,
+  type DidConfig,
+  type DidDocument,
+  type DidField,
+  type IncrustationMode,
+  type NoSqlModelKind,
+  type TableDeletionCheck
+} from "../der/did";
+import {
   analyzeDecomposition,
   attributeClosure,
   buildNormalizedRelationsFromRM,
@@ -49,7 +66,13 @@ import type {
   TableSchema
 } from "../der/types";
 
-export type DerWorkbenchFocus = "der" | "normalization";
+export type DerWorkbenchFocus =
+  | "der"
+  | "normalization"
+  | "nosql-document"
+  | "nosql-graph"
+  | "nosql-column"
+  | "nosql-keyvalue";
 
 interface SelectionState {
   kind: "element" | "relation" | null;
@@ -117,6 +140,16 @@ export function renderDerPage(initialFocus: DerWorkbenchFocus = "der"): HTMLElem
   let closureInputCols: string[] = [];
   let customDecompInput = "";
   let showSqlModal = false;
+  let didConfig: DidConfig = defaultDidConfig("DDBB_NoSQL");
+  let activeNoSqlModel: NoSqlModelKind =
+    initialFocus === "nosql-graph"
+      ? "graph"
+      : initialFocus === "nosql-column"
+        ? "column"
+        : initialFocus === "nosql-keyvalue"
+          ? "keyvalue"
+          : "document";
+  let didOutputFormat: "xml" | "native" = "xml";
 
   const getDiagram = (): DerDiagramData => diagrams[currentDiagramIndex];
 
@@ -222,6 +255,9 @@ export function renderDerPage(initialFocus: DerWorkbenchFocus = "der"): HTMLElem
 
       <!-- Step 3: Normal Form Validator, Converter (1NF / 2NF / 3NF / BCNF) & Lossless / FD-Preservation Analysis -->
       <section class="panel" id="der-norm-section"></section>
+
+      <!-- Step 4: NoSQL DID (Document Instance Diagram) & Mongo-Style XML Generator -->
+      <section class="panel" id="der-did-section"></section>
     </div>
   `;
 
@@ -229,6 +265,7 @@ export function renderDerPage(initialFocus: DerWorkbenchFocus = "der"): HTMLElem
   const inspectorEl = article.querySelector<HTMLElement>("#der-inspector")!;
   const rmSectionEl = article.querySelector<HTMLElement>("#der-rm-section")!;
   const normSectionEl = article.querySelector<HTMLElement>("#der-norm-section")!;
+  const didSectionEl = article.querySelector<HTMLElement>("#der-did-section")!;
   const selectEl = article.querySelector<HTMLSelectElement>("#der-diagram-select")!;
   const titleInputEl = article.querySelector<HTMLInputElement>("#der-diagram-title")!;
   const descEl = article.querySelector<HTMLElement>("#der-diagram-desc")!;
@@ -536,9 +573,24 @@ export function renderDerPage(initialFocus: DerWorkbenchFocus = "der"): HTMLElem
       box.setAttribute("height", String(h));
       box.setAttribute("rx", "7");
       box.setAttribute("fill", "#ffffff");
-      box.setAttribute("stroke", isSelected ? "#2563eb" : "#0f172a");
+      box.setAttribute("stroke", isSelected ? "#2563eb" : elem.isWeak ? "#b45309" : "#0f172a");
       box.setAttribute("stroke-width", isSelected ? "2.5" : "1.8");
       g.appendChild(box);
+
+      // Double-border inner frame for Weak Entities (classic ER notation)
+      if (elem.isWeak) {
+        const innerBox = document.createElementNS(SVG_NS, "rect");
+        innerBox.setAttribute("x", String(left - 4));
+        innerBox.setAttribute("y", String(top - 4));
+        innerBox.setAttribute("width", String(w + 8));
+        innerBox.setAttribute("height", String(h + 8));
+        innerBox.setAttribute("rx", "9");
+        innerBox.setAttribute("fill", "none");
+        innerBox.setAttribute("stroke", isSelected ? "#2563eb" : "#b45309");
+        innerBox.setAttribute("stroke-width", "1.5");
+        innerBox.setAttribute("stroke-dasharray", "4 2");
+        g.appendChild(innerBox);
+      }
 
       const headerRect = document.createElementNS(SVG_NS, "rect");
       headerRect.setAttribute("x", String(left));
@@ -546,7 +598,7 @@ export function renderDerPage(initialFocus: DerWorkbenchFocus = "der"): HTMLElem
       headerRect.setAttribute("width", String(w));
       headerRect.setAttribute("height", String(headerH));
       headerRect.setAttribute("rx", "6");
-      headerRect.setAttribute("fill", isSelected ? "#2563eb" : "#0f172a");
+      headerRect.setAttribute("fill", isSelected ? "#2563eb" : elem.isWeak ? "#b45309" : "#0f172a");
       g.appendChild(headerRect);
 
       const title = document.createElementNS(SVG_NS, "text");
@@ -556,7 +608,7 @@ export function renderDerPage(initialFocus: DerWorkbenchFocus = "der"): HTMLElem
       title.setAttribute("fill", "#ffffff");
       title.setAttribute("font-size", "12.5");
       title.setAttribute("font-weight", "700");
-      title.textContent = elem.name;
+      title.textContent = elem.isWeak ? `${elem.name} [WEAK]` : elem.name;
       g.appendChild(title);
 
       elem.attributes.forEach((attr, idx) => {
@@ -884,6 +936,21 @@ export function renderDerPage(initialFocus: DerWorkbenchFocus = "der"): HTMLElem
       </div>
 
       ${
+        !isAgg
+          ? `
+        <div class="der-form-group">
+          <label class="der-pk-check" style="font-size:0.8rem;">
+            <input type="checkbox" id="insp-elem-weak" ${
+              (elem as DerEntity).isWeak ? "checked" : ""
+            } />
+            Weak Entity (Entidad Débil — candidate for complete incrustation &amp; table deletion)
+          </label>
+        </div>
+      `
+          : ""
+      }
+
+      ${
         isAgg
           ? `
         <div class="der-form-group">
@@ -976,6 +1043,18 @@ export function renderDerPage(initialFocus: DerWorkbenchFocus = "der"): HTMLElem
           persist();
           renderCanvas();
           renderRelationalAndNormalization();
+          renderDidSection();
+        }
+      });
+
+    inspectorEl
+      .querySelector<HTMLInputElement>("#insp-elem-weak")
+      ?.addEventListener("change", (ev) => {
+        if (elem.kind === "entity") {
+          elem.isWeak = (ev.target as HTMLInputElement).checked;
+          persist();
+          renderCanvas();
+          renderDidSection();
         }
       });
 
@@ -2199,13 +2278,743 @@ export function renderDerPage(initialFocus: DerWorkbenchFocus = "der"): HTMLElem
     });
   });
 
+  function renderDidFieldHtml(f: DidField): string {
+    switch (f.kind) {
+      case "scalar":
+        return `
+          <div class="did-tree-item">
+            <span class="did-field-tag">${f.isKey ? "🔑 _id" : "• field"}</span>
+            <code>${escapeHtml(f.name)}</code>:
+            <span class="rm-col-type">${escapeHtml(f.attrType)}</span>
+          </div>
+        `;
+      case "multivalued":
+        return `
+          <div class="did-tree-item">
+            <span class="did-field-tag is-array">[ ] array</span>
+            <code>${escapeHtml(f.name)}</code>:
+            <span class="rm-col-type">ARRAY&lt;${escapeHtml(f.elemType)}&gt;</span>
+          </div>
+        `;
+      case "reference":
+        return `
+          <div class="did-tree-item is-ref">
+            <span class="did-field-tag is-ref-tag">${
+              f.isArray ? "↗ RefArray (None)" : "↗ DBRef (None)"
+            }</span>
+            <strong>${escapeHtml(f.relName)}</strong> <code>[${f.relKind}]</code> →
+            collection <code>${escapeHtml(f.targetCollection)}</code>
+            (${f.targetKeys.map((k) => `${f.targetCollection}_${k.name}`).join(", ")})
+            ${
+              f.relAttributes.length > 0
+                ? ` + attrs(${f.relAttributes.map((a) => a.name).join(", ")})`
+                : ""
+            }
+          </div>
+        `;
+      case "partial-incrustation":
+        return `
+          <div class="did-tree-item is-partial-inc">
+            <span class="did-field-tag is-partial-tag">${
+              f.isArray ? "◐ PartialIncrustation[]" : "◐ PartialIncrustation"
+            }</span>
+            <strong>${escapeHtml(f.relName)}</strong> <code>[${f.relKind}]</code> →
+            ref <code>${escapeHtml(f.targetCollection)}</code>
+            (${f.targetKeys.map((k) => `${f.targetCollection}_${k.name}`).join(", ")}) +
+            <strong>incrusted:</strong> { ${f.incrustedAttributes
+              .map((a) => `<code>${escapeHtml(a.name)}: ${escapeHtml(a.attrType)}</code>`)
+              .join(", ")} }
+          </div>
+        `;
+      case "embedded":
+        return `
+          <div class="did-embedded-box">
+            <div class="did-embedded-header">
+              <span class="did-field-tag is-embed-tag">${
+                f.isArray ? "⊞ Complete Incrustation[]" : "⊞ Complete Incrustation"
+              }</span>
+              <strong>${escapeHtml(f.relName)}</strong> <code>[${f.relKind}]</code> →
+              embeds <code>${escapeHtml(f.childDoc.docName)}</code>
+              ${
+                f.absorbedTable
+                  ? `<span class="verdict-pill is-ok" style="padding:0.08rem 0.45rem;font-size:0.68rem;">Table Deleted &amp; Absorbed ✓</span>`
+                  : ""
+              }
+              ${
+                f.relAttributes.length > 0
+                  ? `<span class="panel-meta">(rel attrs: ${escapeHtml(
+                      f.relAttributes.map((a) => a.name).join(", ")
+                    )})</span>`
+                  : ""
+              }
+            </div>
+            ${renderDidDocHtml(f.childDoc)}
+          </div>
+        `;
+    }
+  }
+
+  function renderDidDocHtml(doc: DidDocument): string {
+    return `
+      <div class="did-doc-tree">
+        <div class="did-id-line">
+          <strong>_id:</strong> { ${doc.idFields
+            .map((k) => `<code>${escapeHtml(k.name)}: ${escapeHtml(k.attrType)}</code>`)
+            .join(", ")} }
+          ${doc.isWeak ? `<span class="rm-origin-pill">Weak Entity</span>` : ""}
+        </div>
+        <div class="did-fields-list">
+          ${doc.fields.map(renderDidFieldHtml).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDeletedTablesBanner(deleted: TableDeletionCheck[]): string {
+    if (deleted.length === 0) {
+      return `
+        <div class="panel-hint" style="background:var(--bg-subtle);padding:0.45rem 0.7rem;border-radius:7px;border:1px solid var(--border);margin-bottom:0.85rem;">
+          <strong>Active Standalone Tables:</strong> All DER entities currently remain standalone tables/collections. To absorb and delete a table (such as a <strong>Weak Entity</strong>), set its incoming relation to <strong>Complete Incrustation</strong> and check <strong>Delete Target Table</strong>.
+        </div>
+      `;
+    }
+    return `
+      <div class="der-ok-banner" style="margin:0 0 0.85rem;">
+        <strong>Absorbed &amp; Deleted Standalone Tables (${deleted.length}):</strong>
+        ${deleted
+          .map(
+            (d) =>
+              `<span class="rm-col-chip" style="background:#ffffff;margin-left:0.35rem;">
+                🗑 <s><strong>${escapeHtml(d.targetName)}</strong></s> ${
+                  d.isWeak ? "(Weak Entity)" : ""
+                } → absorbed into <strong>${escapeHtml(d.absorbedInto.join(", "))}</strong>
+              </span>`
+          )
+          .join("")}
+      </div>
+    `;
+  }
+
+  function renderDidSection(): void {
+    const diagram = getDiagram();
+    const didDb = convertDerToDid(diagram, didConfig);
+    const graphOut = convertDerToGraphModel(diagram, didConfig);
+    const colOut = convertDerToColumnModel(diagram, didConfig);
+    const kvOut = convertDerToKeyValueModel(diagram, didConfig);
+
+    const allRootSelected = didConfig.rootCollectionNames.length === 0;
+    const deletionByTarget = new Map<string, TableDeletionCheck>(
+      didDb.allDeletionChecks.map((c) => [c.targetId, c])
+    );
+
+    const modelLabels: { id: NoSqlModelKind; title: string; subtitle: string }[] = [
+      { id: "document", title: "Document (DID / Mongo)", subtitle: "Collections + Embedded / DBRef" },
+      { id: "graph", title: "Graph (Property Graph)", subtitle: "Nodes & Edges + Cypher" },
+      { id: "column", title: "Column (Wide-Column)", subtitle: "Column Families + Cassandra CQL" },
+      { id: "keyvalue", title: "Key-Value (Keyspace)", subtitle: "Key Prefixes + Redis" }
+    ];
+
+    let visualLeftHtml = "";
+    let activeXml = "";
+    let activeNativeScript = "";
+    let nativeLabel = "";
+
+    if (activeNoSqlModel === "document") {
+      activeXml = formatDidDatabaseXml(didDb);
+      activeNativeScript = formatDidMongoJson(didDb);
+      nativeLabel = "Mongo BSON / JSON";
+      visualLeftHtml = `
+        <div class="der-sub-header">
+          <h3>Document Model · DID Hierarchy (${didDb.collections.length} Active Collections)</h3>
+        </div>
+        <div class="did-collections-list">
+          ${didDb.collections
+            .map(
+              (col) => `
+            <div class="rm-table-card">
+              <div class="rm-table-header">
+                <div>
+                  <span class="rm-table-name">db.${escapeHtml(col.collectionName)}</span>
+                  <span class="rm-origin-pill">${col.originKind}${
+                    col.isWeak ? " · weak" : ""
+                  }</span>
+                </div>
+                <span class="verified-pill">DID Collection</span>
+              </div>
+              ${renderDidDocHtml(col.rootDoc)}
+            </div>
+          `
+            )
+            .join("")}
+        </div>
+      `;
+    } else if (activeNoSqlModel === "graph") {
+      activeXml = graphOut.xmlOutput;
+      activeNativeScript = graphOut.cypherScript;
+      nativeLabel = "Neo4j Cypher";
+      visualLeftHtml = `
+        <div class="der-sub-header">
+          <h3>Property Graph Model (${graphOut.nodes.length} Node Labels · ${graphOut.edges.length} Edge Types)</h3>
+        </div>
+        <div class="did-collections-list">
+          ${graphOut.nodes
+            .map(
+              (n) => `
+            <div class="rm-table-card">
+              <div class="rm-table-header">
+                <div>
+                  <span class="rm-table-name">(:${escapeHtml(n.label)})</span>
+                  <span class="rm-origin-pill">Graph Node</span>
+                </div>
+                <span class="nf-badge nf-3nf">PK: ${escapeHtml(
+                  n.keys.map((k) => k.name).join(", ")
+                )}</span>
+              </div>
+              <div class="rm-cols-row">
+                ${n.properties
+                  .map(
+                    (p) => `
+                  <span class="rm-col-chip ${
+                    p.origin === "key"
+                      ? "is-pk"
+                      : p.origin.startsWith("complete")
+                        ? "is-multivalued"
+                        : ""
+                  }">
+                    <span class="rm-col-name">${escapeHtml(p.name)}</span>
+                    <span class="rm-col-type">${escapeHtml(p.type)}</span>
+                    <span class="rm-col-badge">${escapeHtml(p.origin)}</span>
+                  </span>
+                `
+                  )
+                  .join("")}
+              </div>
+            </div>
+          `
+            )
+            .join("")}
+          ${graphOut.edges
+            .map(
+              (e) => `
+            <div class="rm-table-card" style="border-style:dashed;">
+              <div class="rm-table-header">
+                <div>
+                  <span class="rm-table-name">(:${escapeHtml(
+                    e.fromLabel
+                  )})-[:${escapeHtml(e.type)}]->(:${escapeHtml(e.toLabel)})</span>
+                </div>
+                <span class="nf-badge nf-2nf">${e.cardinality} · incrustation: ${
+                  e.incrustation
+                }</span>
+              </div>
+              <div class="rm-cols-row">
+                ${
+                  e.properties.length === 0
+                    ? `<span class="panel-meta">No edge properties</span>`
+                    : e.properties
+                        .map(
+                          (p) => `
+                        <span class="rm-col-chip">
+                          <span class="rm-col-name">${escapeHtml(p.name)}</span>
+                          <span class="rm-col-type">${escapeHtml(p.type)}</span>
+                          <span class="rm-col-badge">${escapeHtml(p.origin)}</span>
+                        </span>
+                      `
+                        )
+                        .join("")
+                }
+              </div>
+            </div>
+          `
+            )
+            .join("")}
+        </div>
+      `;
+    } else if (activeNoSqlModel === "column") {
+      activeXml = colOut.xmlOutput;
+      activeNativeScript = colOut.cqlScript;
+      nativeLabel = "Cassandra CQL";
+      visualLeftHtml = `
+        <div class="der-sub-header">
+          <h3>Wide-Column Model (${colOut.families.length} Column Families)</h3>
+        </div>
+        <div class="did-collections-list">
+          ${colOut.families
+            .map(
+              (cf) => `
+            <div class="rm-table-card">
+              <div class="rm-table-header">
+                <div>
+                  <span class="rm-table-name">${escapeHtml(cf.name)}</span>
+                  <span class="rm-origin-pill">Column Family</span>
+                </div>
+                <span class="nf-badge nf-bcnf">Partition: (${escapeHtml(
+                  cf.partitionKeys.join(", ")
+                )})${
+                  cf.clusteringKeys.length > 0
+                    ? ` · Cluster: (${escapeHtml(cf.clusteringKeys.join(", "))})`
+                    : ""
+                }</span>
+              </div>
+              <div class="rm-cols-row">
+                ${cf.columns
+                  .map(
+                    (c) => `
+                  <span class="rm-col-chip ${
+                    c.role === "partition-key"
+                      ? "is-pk"
+                      : c.role.startsWith("incrusted")
+                        ? "is-multivalued"
+                        : ""
+                  }">
+                    <span class="rm-col-name">${escapeHtml(c.name)}</span>
+                    <span class="rm-col-type">${escapeHtml(c.cqlType)}</span>
+                    <span class="rm-col-badge">${escapeHtml(c.role)}</span>
+                  </span>
+                `
+                  )
+                  .join("")}
+              </div>
+            </div>
+          `
+            )
+            .join("")}
+        </div>
+      `;
+    } else {
+      activeXml = kvOut.xmlOutput;
+      activeNativeScript = kvOut.redisScript;
+      nativeLabel = "Redis Commands";
+      visualLeftHtml = `
+        <div class="der-sub-header">
+          <h3>Key-Value Model (${kvOut.buckets.length} Active Keyspace Prefixes)</h3>
+        </div>
+        <div class="did-collections-list">
+          ${kvOut.buckets
+            .map(
+              (b) => `
+            <div class="rm-table-card">
+              <div class="rm-table-header">
+                <div>
+                  <span class="rm-table-name">KEY: <code>${escapeHtml(
+                    b.keyPattern
+                  )}</code></span>
+                </div>
+                <span class="rm-origin-pill">${escapeHtml(b.entityName)}</span>
+              </div>
+              <div class="rm-cols-row">
+                ${b.valueFields
+                  .map(
+                    (f) => `
+                  <span class="rm-col-chip ${
+                    f.origin === "key"
+                      ? "is-pk"
+                      : f.origin.includes("incrustation")
+                        ? "is-multivalued"
+                        : ""
+                  }">
+                    <span class="rm-col-name">${escapeHtml(f.name)}</span>
+                    <span class="rm-col-type">${escapeHtml(f.type)}</span>
+                    <span class="rm-col-badge">${escapeHtml(f.origin)}</span>
+                  </span>
+                `
+                  )
+                  .join("")}
+              </div>
+              ${
+                b.secondaryIndexKeys.length > 0
+                  ? `<div class="rm-fk-list">
+                      ${b.secondaryIndexKeys
+                        .map((s) => `<div class="rm-fk-item">↳ Index Set: <code>${escapeHtml(s)}</code></div>`)
+                        .join("")}
+                    </div>`
+                  : ""
+              }
+            </div>
+          `
+            )
+            .join("")}
+        </div>
+      `;
+    }
+
+    didSectionEl.innerHTML = `
+      <div class="panel-header">
+        <div>
+          <h2>Step 3 · NoSQL Models (Document · Graph · Column · Key-Value), Incrustations &amp; Table Deletions</h2>
+          <p class="panel-hint" style="margin:0.2rem 0 0;">
+            Reuses the DER diagram above across all 4 NoSQL paradigms. Configure
+            <strong>Partial Incrustation</strong> (selected attributes) or
+            <strong>Complete Incrustation</strong> (all attributes) on any relation, and
+            <strong>delete/absorb standalone tables</strong> (such as <strong>Weak Entities</strong>)
+            when completely incrusted.
+          </p>
+        </div>
+        <div class="inline-form">
+          <button type="button" class="btn btn-secondary btn-sm" id="download-did-xml">
+            Download .xml
+          </button>
+        </div>
+      </div>
+
+      <!-- 4 NoSQL Subsection Tabs: Document | Graph | Column | Key-Value -->
+      <div class="nosql-model-tabs">
+        ${modelLabels
+          .map(
+            (m) => `
+          <button type="button" class="nosql-tab-btn ${
+            activeNoSqlModel === m.id ? "is-active" : ""
+          }" data-nosql-model="${m.id}">
+            <span class="nosql-tab-title">${escapeHtml(m.title)}</span>
+            <span class="nosql-tab-sub">${escapeHtml(m.subtitle)}</span>
+          </button>
+        `
+          )
+          .join("")}
+      </div>
+
+      ${renderDeletedTablesBanner(didDb.deletedTables)}
+
+      <!-- Incrustation (Partial / Complete) & Table Deletion Controls -->
+      <div class="der-norm-two-col" style="margin-bottom:1rem;">
+        <div class="der-subpanel">
+          <div class="der-sub-header">
+            <h3>1. Incrustations (Partial / Complete) &amp; Table Deletion</h3>
+          </div>
+          ${
+            diagram.relations.length === 0
+              ? `<p class="panel-hint">Add a relation in the DER canvas above to configure incrustations.</p>`
+              : `<div class="did-rel-mode-list">
+                  ${diagram.relations
+                    .map((rel) => {
+                      const src = diagram.elements.find((e) => e.id === rel.sourceId);
+                      const dst = diagram.elements.find((e) => e.id === rel.targetId);
+                      const rKind = relationKindOf(rel);
+                      const rule = getRelationRule(didConfig, rel, dst);
+                      const eff = effectiveIncrustation(didConfig, rel, dst);
+                      const delCheck = dst ? deletionByTarget.get(dst.id) : undefined;
+                      const nonKeyTargetAttrs = (dst?.attributes ?? []).filter(
+                        (a) => !a.isKey
+                      );
+
+                      return `
+                        <div class="did-rel-card">
+                          <div class="did-rel-mode-row">
+                            <div>
+                              <strong>${escapeHtml(rel.name)}</strong>
+                              <code>[${rKind}]</code>
+                              <span class="panel-meta">${escapeHtml(
+                                src?.name ?? "?"
+                              )} → ${escapeHtml(dst?.name ?? "?")}</span>
+                              ${
+                                dst && dst.kind === "entity" && dst.isWeak
+                                  ? `<span class="nf-badge nf-1nf">Target is Weak Entity</span>`
+                                  : ""
+                              }
+                            </div>
+                            <div class="segmented">
+                              ${(
+                                [
+                                  { id: "auto", label: "Auto" },
+                                  { id: "none", label: "None (Ref)" },
+                                  { id: "partial", label: "Partial" },
+                                  { id: "complete", label: "Complete" }
+                                ] as { id: IncrustationMode; label: string }[]
+                              )
+                                .map(
+                                  (m) => `
+                                <button type="button" class="segmented-btn ${
+                                  rule.mode === m.id ? "is-active" : ""
+                                }" data-did-rel="${escapeHtml(rel.name)}" data-did-mode="${m.id}">
+                                  ${m.label}
+                                </button>
+                              `
+                                )
+                                .join("")}
+                            </div>
+                          </div>
+
+                          ${
+                            eff.resolvedMode === "partial"
+                              ? `
+                            <div class="did-partial-picker">
+                              <span class="der-field-label" style="margin-bottom:0.2rem;">
+                                Partial Incrustation Attributes from <code>${escapeHtml(
+                                  dst?.name ?? ""
+                                )}</code> (PK is always included as reference):
+                              </span>
+                              <div class="der-chip-row">
+                                ${
+                                  nonKeyTargetAttrs.length === 0
+                                    ? `<span class="panel-meta">Target only has PK attributes</span>`
+                                    : nonKeyTargetAttrs
+                                        .map((attr) => {
+                                          const checked = eff.incrustedAttrs.some(
+                                            (a) => a.name === attr.name
+                                          );
+                                          return `
+                                            <label class="der-pk-check" style="background:#ffffff;border:1px solid var(--border);padding:0.15rem 0.45rem;border-radius:6px;">
+                                              <input type="checkbox" data-partial-rel="${escapeHtml(
+                                                rel.name
+                                              )}" data-partial-attr="${escapeHtml(
+                                                attr.name
+                                              )}" ${checked ? "checked" : ""} />
+                                              ${escapeHtml(attr.name)} (${attr.attrType})
+                                            </label>
+                                          `;
+                                        })
+                                        .join("")
+                                }
+                              </div>
+                            </div>
+                          `
+                              : ""
+                          }
+
+                          ${
+                            dst && dst.id !== src?.id
+                              ? `
+                            <div class="did-delete-row">
+                              <label class="der-pk-check">
+                                <input type="checkbox" data-delete-rel="${escapeHtml(
+                                  rel.name
+                                )}" ${rule.deleteTargetTable ? "checked" : ""} />
+                                Delete standalone table <code>${escapeHtml(
+                                  dst.name
+                                )}</code> (absorb into <code>${escapeHtml(
+                                  src?.name ?? "?"
+                                )}</code>)
+                              </label>
+                              ${
+                                delCheck
+                                  ? `<span class="panel-meta" style="color:${
+                                      delCheck.actuallyDeleted
+                                        ? "var(--green)"
+                                        : rule.deleteTargetTable && !delCheck.canDelete
+                                          ? "var(--rose)"
+                                          : "var(--ink-secondary)"
+                                    };">
+                                      ${escapeHtml(delCheck.reason)}
+                                    </span>`
+                                  : ""
+                              }
+                            </div>
+                          `
+                              : ""
+                          }
+                        </div>
+                      `;
+                    })
+                    .join("")}
+                </div>`
+          }
+        </div>
+
+        <div class="der-subpanel">
+          <div class="der-sub-header">
+            <h3>2. Database &amp; Root Filter Settings</h3>
+            <button type="button" class="btn btn-chip btn-sm" id="did-reset-roots">
+              ${allRootSelected ? "All Non-Deleted Roots Active ✓" : "Select All Roots"}
+            </button>
+          </div>
+
+          <div class="der-two-col" style="margin-bottom:0.65rem;">
+            <div>
+              <label class="der-field-label">Database / Keyspace Name</label>
+              <input type="text" class="input input-sm" id="did-db-name" value="${escapeHtml(
+                didConfig.dbName
+              )}" style="width:100%;" />
+            </div>
+            <div>
+              <label class="der-field-label">Max Nesting Depth</label>
+              <select class="input input-sm" id="did-max-depth" style="width:100%;">
+                ${[1, 2, 3]
+                  .map(
+                    (d) =>
+                      `<option value="${d}" ${
+                        didConfig.maxDepth === d ? "selected" : ""
+                      }>${d} level${d > 1 ? "s" : ""}</option>`
+                  )
+                  .join("")}
+              </select>
+            </div>
+          </div>
+
+          <div class="der-field-label">Entities / Aggregations Status (Weak Entities &amp; Table Deletions)</div>
+          <div class="did-entity-status-list">
+            ${didDb.allDeletionChecks
+              .map(
+                (chk) => `
+              <div class="did-entity-status-row">
+                <div>
+                  <strong>${escapeHtml(chk.targetName)}</strong>
+                  ${chk.isWeak ? `<span class="nf-badge nf-1nf">Weak Entity</span>` : ""}
+                </div>
+                <div>
+                  ${
+                    chk.actuallyDeleted
+                      ? `<span class="nf-badge nf-bcnf">Deleted &amp; Absorbed ✓</span>`
+                      : chk.canDelete
+                        ? `<span class="nf-badge nf-3nf">Eligible for Deletion</span>`
+                        : `<span class="rm-origin-pill">Active Standalone Table</span>`
+                  }
+                </div>
+              </div>
+            `
+              )
+              .join("")}
+          </div>
+        </div>
+      </div>
+
+      <!-- Visual NoSQL Model Cards + Generated XML / Native Script -->
+      <div class="der-norm-two-col">
+        <div>
+          ${visualLeftHtml}
+        </div>
+
+        <div>
+          <div class="der-sub-header">
+            <h3>Generated Output (${modelLabels.find((m) => m.id === activeNoSqlModel)?.title})</h3>
+            <div class="segmented">
+              <button type="button" class="segmented-btn ${
+                didOutputFormat === "xml" ? "is-active" : ""
+              }" data-did-fmt="xml">
+                XML Output
+              </button>
+              <button type="button" class="segmented-btn ${
+                didOutputFormat === "native" ? "is-active" : ""
+              }" data-did-fmt="native">
+                ${escapeHtml(nativeLabel)}
+              </button>
+            </div>
+          </div>
+          <pre class="der-sql-pre" style="max-height:540px;overflow:auto;"><code>${escapeHtml(
+            didOutputFormat === "xml" ? activeXml : activeNativeScript
+          )}</code></pre>
+        </div>
+      </div>
+    `;
+
+    didSectionEl.querySelectorAll<HTMLButtonElement>("[data-nosql-model]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        activeNoSqlModel = btn.dataset.nosqlModel as NoSqlModelKind;
+        renderDidSection();
+      });
+    });
+
+    didSectionEl
+      .querySelector<HTMLInputElement>("#did-db-name")
+      ?.addEventListener("input", (ev) => {
+        const val = (ev.target as HTMLInputElement).value.trim();
+        if (val) {
+          didConfig.dbName = val;
+          renderDidSection();
+        }
+      });
+
+    didSectionEl
+      .querySelector<HTMLSelectElement>("#did-max-depth")
+      ?.addEventListener("change", (ev) => {
+        didConfig.maxDepth = Number((ev.target as HTMLSelectElement).value) || 2;
+        renderDidSection();
+      });
+
+    didSectionEl.querySelector("#did-reset-roots")?.addEventListener("click", () => {
+      didConfig.rootCollectionNames = [];
+      renderDidSection();
+    });
+
+    didSectionEl.querySelectorAll<HTMLButtonElement>("[data-did-rel]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const relName = btn.dataset.didRel!;
+        const mode = btn.dataset.didMode as IncrustationMode;
+        const rel = diagram.relations.find((r) => r.name === relName);
+        const dst = diagram.elements.find((e) => e.id === rel?.targetId);
+        const cur = getRelationRule(didConfig, rel!, dst);
+        didConfig.relationRules[relName] = {
+          ...cur,
+          mode,
+          // If switching to partial/none, cannot delete standalone table
+          deleteTargetTable:
+            mode === "partial" || mode === "none" ? false : cur.deleteTargetTable
+        };
+        renderDidSection();
+      });
+    });
+
+    didSectionEl
+      .querySelectorAll<HTMLInputElement>("[data-partial-rel]")
+      .forEach((cb) => {
+        cb.addEventListener("change", () => {
+          const relName = cb.dataset.partialRel!;
+          const attrName = cb.dataset.partialAttr!;
+          const rel = diagram.relations.find((r) => r.name === relName);
+          const dst = diagram.elements.find((e) => e.id === rel?.targetId);
+          const cur = getRelationRule(didConfig, rel!, dst);
+          const set = new Set(cur.partialAttrs);
+          if (cb.checked) {
+            set.add(attrName);
+          } else if (set.size > 1) {
+            set.delete(attrName);
+          }
+          didConfig.relationRules[relName] = {
+            ...cur,
+            partialAttrs: [...set]
+          };
+          renderDidSection();
+        });
+      });
+
+    didSectionEl
+      .querySelectorAll<HTMLInputElement>("[data-delete-rel]")
+      .forEach((cb) => {
+        cb.addEventListener("change", () => {
+          const relName = cb.dataset.deleteRel!;
+          const rel = diagram.relations.find((r) => r.name === relName);
+          const dst = diagram.elements.find((e) => e.id === rel?.targetId);
+          const cur = getRelationRule(didConfig, rel!, dst);
+          didConfig.relationRules[relName] = {
+            ...cur,
+            // Auto-upgrade to complete incrustation when user requests table deletion
+            mode: cb.checked && cur.mode !== "complete" ? "complete" : cur.mode,
+            deleteTargetTable: cb.checked
+          };
+          renderDidSection();
+        });
+      });
+
+    didSectionEl.querySelectorAll<HTMLButtonElement>("[data-did-fmt]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        didOutputFormat = btn.dataset.didFmt as "xml" | "native";
+        renderDidSection();
+      });
+    });
+
+    didSectionEl.querySelector("#download-did-xml")?.addEventListener("click", () => {
+      const blob = new Blob([activeXml], { type: "application/xml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${didConfig.dbName.toLowerCase()}.${activeNoSqlModel}.xml`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }
+
   function renderAll(): void {
     renderStorageBar();
     renderCanvas();
     renderInspector();
     renderRelationalAndNormalization();
+    renderDidSection();
   }
 
   renderAll();
+  if (initialFocus.startsWith("nosql-")) {
+    setTimeout(() => {
+      didSectionEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 40);
+  }
   return article;
 }

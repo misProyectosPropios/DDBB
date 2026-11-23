@@ -398,6 +398,7 @@ export const PRESET_DER_DIAGRAMS: DerDiagramData[] = [
         id: "ent-pasaporte",
         kind: "entity",
         name: "Pasaporte",
+        isWeak: true,
         position: { x: 470, y: 95 },
         attributes: [
           { name: "numero", attrType: "STRING", isKey: true },
@@ -456,6 +457,7 @@ export const PRESET_DER_DIAGRAMS: DerDiagramData[] = [
         id: "ent-examen",
         kind: "entity",
         name: "Examen",
+        isWeak: true,
         position: { x: 300, y: 500 },
         attributes: [
           { name: "id_examen", attrType: "INT", isKey: true },

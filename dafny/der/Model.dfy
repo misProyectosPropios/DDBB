@@ -285,6 +285,7 @@ module DerModel {
       ensures Valid()
       ensures relations == old(relations) + [rel]
       ensures Repr == old(Repr) + {rel}
+      ensures AggregationDetails() == old(AggregationDetails())
 
     function GetRelations(): seq<Relation>
       reads this
@@ -333,6 +334,7 @@ module DerModel {
       ensures Valid()
       ensures relations == old(relations) + [rel]
       ensures Repr == old(Repr) + {rel}
+      ensures AggregationDetails() == old(AggregationDetails())
     {
       relations := relations + [rel];
       Repr := Repr + {rel};
@@ -396,6 +398,7 @@ module DerModel {
       ensures Valid()
       ensures relations == old(relations) + [rel]
       ensures Repr == old(Repr) + {rel}
+      ensures AggregationDetails() == old(AggregationDetails())
     {
       relations := relations + [rel];
       Repr := Repr + {rel};
@@ -450,6 +453,7 @@ module DerModel {
       ensures source.Valid()
       ensures source.relations == old(source.relations) + [rel]
       ensures source.Repr == old(source.Repr) + {rel}
+      ensures source.AggregationDetails() == old(source.AggregationDetails())
     {
       assert source as object != this as object;
       source.AddRelation(rel);

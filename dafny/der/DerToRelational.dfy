@@ -169,11 +169,8 @@ module DerToRelational {
     assert elem.AggregationDetails() == old(elem.AggregationDetails());
     match elem.AggregationDetails() {
       case NotAnAggregation =>
-        assert elem.attributes == old(elem.attributes);
       case AggregationOf(src, rel) =>
-        assert src.name == old(src.name) && src.attributes == old(src.attributes);
-        assert rel.target == old(rel.target) && rel.Kind() == old(rel.Kind());
-        assert rel.target.name == old(rel.target.name) && rel.target.attributes == old(rel.target.attributes);
+        assert rel.Kind() == old(rel.Kind());
     }
   }
 
@@ -186,6 +183,10 @@ module DerToRelational {
           set e, o | e in diagram.elements && o in e.Repr :: o
   {
     diagram.Valid() &&
+    (forall i :: 0 <= i < |diagram.elements| ==>
+      diagram as object !in diagram.elements[i].Repr &&
+      (forall j :: 0 <= j < |diagram.elements| && j != i ==>
+        diagram.elements[j] as object !in diagram.elements[i].Repr)) &&
     (forall i :: 0 <= i < |diagram.elements| ==>
       var elem := diagram.elements[i];
       elem.Valid() &&
@@ -203,6 +204,88 @@ module DerToRelational {
     (forall i :: 0 <= i < |diagram.elements| ==>
       forall r :: r in diagram.elements[i].relations ==>
         r.target in diagram.elements)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Incremental `ConvertibleDiagram` builders (callers never need to reveal
+  // `ConvertibleDiagram` when assembling a DER diagram step by step)
+  // ---------------------------------------------------------------------------
+
+  lemma LemmaEmptyDiagramConvertible(diagram: DerDiagram)
+    requires diagram.Valid()
+    requires diagram.elements == []
+    ensures ConvertibleDiagram(diagram)
+  {
+    reveal ConvertibleDiagram();
+  }
+
+  method AddConvertibleEntity(diagram: DerDiagram, e: Entity)
+    requires ConvertibleDiagram(diagram)
+    requires e.Valid()
+    requires e.relations == []
+    requires e.Repr == {e}
+    requires e as object != diagram as object
+    requires forall i :: 0 <= i < |diagram.elements| ==>
+      diagram.elements[i] != e &&
+      diagram.elements[i].name != e.name &&
+      e as object !in diagram.elements[i].Repr
+    modifies diagram
+    ensures ConvertibleDiagram(diagram)
+    ensures diagram.elements == old(diagram.elements) + [e]
+  {
+    reveal ConvertibleDiagram();
+    diagram.AddElement(e);
+  }
+
+  method AddConvertibleAggregation(diagram: DerDiagram, agg: Aggregation)
+    requires ConvertibleDiagram(diagram)
+    requires agg.Valid()
+    requires agg.relations == []
+    requires agg.Repr == {agg, agg.innerRelation}
+    requires agg as object != diagram as object
+    requires agg.innerRelation as object != diagram as object
+    requires agg.innerSource in diagram.elements
+    requires agg.innerRelation.target in diagram.elements
+    requires agg.innerSource.AggregationDetails().NotAnAggregation?
+    requires agg.innerRelation.target.AggregationDetails().NotAnAggregation?
+    requires forall i :: 0 <= i < |diagram.elements| ==>
+      diagram.elements[i] != agg &&
+      diagram.elements[i].name != agg.name &&
+      agg as object !in diagram.elements[i].Repr &&
+      diagram.elements[i] as object != agg.innerRelation as object
+    modifies diagram
+    ensures ConvertibleDiagram(diagram)
+    ensures diagram.elements == old(diagram.elements) + [agg]
+  {
+    reveal ConvertibleDiagram();
+    diagram.AddElement(agg);
+  }
+
+  method LinkConvertibleRelation(
+    diagram: DerDiagram,
+    source: EntityElement,
+    rel: Relation
+  )
+    requires ConvertibleDiagram(diagram)
+    requires source in diagram.elements && rel.target in diagram.elements
+    requires rel.ValidRelation()
+    requires rel as object != source as object
+    requires rel as object != diagram as object
+    requires forall i :: 0 <= i < |diagram.elements| ==>
+      diagram.elements[i] as object != rel as object
+    requires forall i :: 0 <= i < |source.relations| ==>
+      DistinctRelations(source.relations[i], rel)
+    modifies source
+    ensures ConvertibleDiagram(diagram)
+    ensures source.Valid()
+    ensures source.relations == old(source.relations) + [rel]
+    ensures source.Repr == old(source.Repr) + {rel}
+    ensures source.AggregationDetails() == old(source.AggregationDetails())
+  {
+    reveal ConvertibleDiagram();
+    ghost var sIdx :| 0 <= sIdx < |diagram.elements| && diagram.elements[sIdx] == source;
+    assert diagram.elements[sIdx].Valid();
+    diagram.LinkRelation(source, rel);
   }
 
   // Extracts concrete element validity, non-empty names, and non-empty primary

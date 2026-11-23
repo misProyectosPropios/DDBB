@@ -12,6 +12,23 @@ module DerTypes {
     | AttrDate
     | AttrDecimal
     | AttrCustom(name: string)
+    | AttrMultiValued(elemType: AttrType)
+
+  // Atomic types satisfy 1NF; multi-valued/repeating-group types violate 1NF.
+  predicate IsAtomicType(t: AttrType)
+  {
+    !t.AttrMultiValued?
+  }
+
+  // Unwraps nested multi-valued wrappers down to an atomic base type.
+  function BaseAtomicType(t: AttrType): AttrType
+    ensures IsAtomicType(BaseAtomicType(t))
+    decreases t
+  {
+    match t
+    case AttrMultiValued(inner) => BaseAtomicType(inner)
+    case _ => t
+  }
 
   datatype Attribute = Attribute(
     name: Name,
@@ -27,6 +44,14 @@ module DerTypes {
   predicate HasKeyAttribute(attrs: seq<Attribute>)
   {
     exists i :: 0 <= i < |attrs| && attrs[i].isKey
+  }
+
+  // Witness lemma when the first attribute in a list is marked as a key.
+  lemma LemmaFirstAttrIsKey(attrs: seq<Attribute>)
+    requires |attrs| > 0 && attrs[0].isKey
+    ensures HasKeyAttribute(attrs)
+  {
+    assert 0 <= 0 < |attrs| && attrs[0].isKey;
   }
 
   // Upper bound of a cardinality: either a positive finite integer or unbounded (* / N / M).
@@ -144,6 +169,7 @@ module DerTypes {
   }
 
   function FormatAttrType(t: AttrType): string
+    decreases t
   {
     match t
     case AttrInt => "INT"
@@ -152,6 +178,7 @@ module DerTypes {
     case AttrDate => "DATE"
     case AttrDecimal => "DECIMAL"
     case AttrCustom(name) => name
+    case AttrMultiValued(inner) => "SET<" + FormatAttrType(inner) + ">"
   }
 
   function FormatAttribute(a: Attribute): string

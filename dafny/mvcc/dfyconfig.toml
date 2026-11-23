@@ -1,0 +1,2 @@
+# Dafny project configuration for the MVCC & Isolation Levels module.
+includes = ["*.dfy"]

@@ -6,12 +6,61 @@ include "Types.dfy"
 include "LockPolicy.dfy"
 include "Serializability.dfy"
 include "PessimisticScheduler.dfy"
+include "DependencyGraph.dfy"
+include "DeadlockAndOCC.dfy"
+
+// Isolated module for verifying Dependency Graphs, Wait-Die / Wound-Wait
+// deadlock prevention, and Kung-Robinson Optimistic Concurrency Control (OCC).
+module GraphAndOccTests {
+  import opened SchedulerTypes
+  import opened LockPolicies
+  import opened DependencyGraph
+  import opened DeadlockAndOCC
+
+  method TestDependencyGraphAndDeadlockAndOCC()
+  {
+    // 1. Precedence / Dependency Graph on a schedule with RW conflict T2 -> T1
+    var ops: seq<SchedOp> := [
+      R("T2", "A"),
+      W("T1", "A")
+    ];
+    var g := BuildPrecedenceGraph(ops);
+
+    // 2. Wait-Die & Wound-Wait Deadlock Prevention verification
+    var ts := map["T1" := 10, "T2" := 20]; // T1 is older (10 < 20)
+    assert WaitDiePolicy(ts["T1"], ts["T2"]) == AllowWait;
+    assert WaitDiePolicy(ts["T2"], ts["T1"]) == AbortRequester_Die;
+    assert WoundWaitPolicy(ts["T1"], ts["T2"]) == PreemptHolder_Wound;
+    assert WoundWaitPolicy(ts["T2"], ts["T1"]) == AllowWait;
+
+    // 3. Wait-For 2-Cycle Deadlock Detector
+    var waitEdges := [
+      WaitEdge("T1", "T2", "B", Exclusive),
+      WaitEdge("T2", "T1", "A", Exclusive)
+    ];
+    var hasDl, a, b := DetectWaitFor2Cycle(waitEdges);
+    assert hasDl;
+
+    // 4. Kung-Robinson OCC Validator
+    var t1 := OccTxRecord("T1", 1, 4, 5, {"A"}, {"B"});
+    var t2 := OccTxRecord("T2", 2, 6, 7, {"C"}, {"D"});
+    assert OccPairValid(t1, t2);
+    var okOcc, aborted := ValidateOccSchedule([t1, t2]);
+    assert okOcc && aborted == [];
+
+    print "=== Dependency Graph, Deadlock (Wait-Die / Wound-Wait) & OCC Verified ===\n";
+    print "Precedence Graph nodes: ", |g.nodes|, ", conflict edges: ", |g.edges|, "\n";
+    print "Wait-For 2-cycle deadlock detected: ", hasDl, " (", a, " <-> ", b, ")\n";
+    print "OCC validation passed: ", okOcc, "\n\n";
+  }
+}
 
 module Main {
   import opened SchedulerTypes
   import opened LockPolicies
   import opened Serializability
   import opened PessimisticScheduling
+  import GraphAndOccTests
 
   // ---------------------------------------------------------------------------
   // Statically verified checks
@@ -348,5 +397,6 @@ module Main {
     DemoNonSerializableCycle();
     DemoTernaryLockSchedule();
     DemoSimpleBinaryLockSchedule();
+    GraphAndOccTests.TestDependencyGraphAndDeadlockAndOCC();
   }
 }
